@@ -21,7 +21,23 @@ export const PEER_RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
+  iceTransportPolicy: 'all',
 };
 
 export function generateRoomCode(): string {
@@ -61,6 +77,7 @@ export interface HostStudentRecord {
   answers: AnswerRecord[];
   essayAnswers: EssayAnswerRecord[];
   online: boolean;
+  lastSeenAt: number;
   pose: PlayerPose;
   conn: DataConnection | null;
 }
@@ -84,6 +101,16 @@ export interface HostRoomState {
 }
 
 export type PeerToHostMessage =
+  | {
+      type: 'ping';
+      id: string;
+      ts: number;
+    }
+  | {
+      type: 'pong';
+      id: string;
+      ts: number;
+    }
   | {
       type: 'join_room';
       studentId: string;
@@ -125,6 +152,14 @@ export type PeerToHostMessage =
     };
 
 export type HostToPeerMessage =
+  | {
+      type: 'ping';
+      ts: number;
+    }
+  | {
+      type: 'pong';
+      ts: number;
+    }
   | {
       type: 'error_msg';
       message: string;

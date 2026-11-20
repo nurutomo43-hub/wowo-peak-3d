@@ -15,6 +15,7 @@ import {
   FileSpreadsheet,
   Flame,
   Ghost,
+  Link2,
   MapPin,
   Mountain,
   Pause,
@@ -94,6 +95,9 @@ interface GameHudProps {
   onEndSession: () => void;
   onJoystickChange: (x: number, y: number) => void;
   onMobileJump: () => void;
+  isStandaloneMode?: boolean;
+  onBuildStandaloneLink?: () => string;
+  onFinishStandalone?: () => void;
 }
 
 const TIME_LABELS: Record<TimeOfDay, string> = {
@@ -156,9 +160,13 @@ export const GameHud: React.FC<GameHudProps> = ({
   onEndSession,
   onJoystickChange,
   onMobileJump,
+  isStandaloneMode = false,
+  onBuildStandaloneLink,
+  onFinishStandalone,
 }) => {
   const [controlsOpen, setControlsOpen] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedStandalone, setCopiedStandalone] = useState(false);
   const [teleportTarget, setTeleportTarget] = useState(0);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [confirmKickId, setConfirmKickId] = useState<string | null>(null);
@@ -182,22 +190,35 @@ export const GameHud: React.FC<GameHudProps> = ({
   const remSS = (safeRem % 60).toString().padStart(2, '0');
   const timerUrgent = safeRem <= 60;
 
-  const handleCopyStudentLink = async () => {
-    const link = `${window.location.origin}${window.location.pathname}?role=student&room=${roomCode}`;
+  const copyTextWithFallback = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(link);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2200);
+      await navigator.clipboard.writeText(text);
     } catch {
       const inp = document.createElement('input');
-      inp.value = link;
+      inp.value = text;
       document.body.appendChild(inp);
       inp.select();
       document.execCommand('copy');
       document.body.removeChild(inp);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2200);
     }
+  };
+
+  const handleCopyStudentLink = async () => {
+    const link = `${window.location.origin}${window.location.pathname}?role=student&room=${roomCode}`;
+    await copyTextWithFallback(link);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2200);
+  };
+
+  const handleCopyStandaloneLink = () => {
+    if (!onBuildStandaloneLink) return;
+    const link = onBuildStandaloneLink();
+    void copyTextWithFallback(link);
+    setCopiedStandalone(true);
+    setTimeout(() => setCopiedStandalone(false), 2600);
+    onToastSuccess(
+      'Link Paket Soal (Mode Mandiri) tersalin! Siswa dapat langsung mengerjakan 25 PG + 5 Isian meski P2P diblokir.',
+    );
   };
 
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -291,7 +312,11 @@ export const GameHud: React.FC<GameHudProps> = ({
             </span>
             <span aria-hidden="true">·</span>
             <span className={role === 'teacher' ? 'text-amber-400 font-semibold' : 'text-sky-400 font-semibold'}>
-              {role === 'teacher' ? 'Guru Pemantau Kebal' : 'Siswa Pendaki'}
+              {role === 'teacher'
+                ? 'Guru Pemantau Kebal'
+                : isStandaloneMode
+                  ? 'Siswa · Mode Mandiri'
+                  : 'Siswa Pendaki'}
             </span>
             <span aria-hidden="true">·</span>
             <span className="text-slate-200">
@@ -497,13 +522,33 @@ export const GameHud: React.FC<GameHudProps> = ({
                     type="button"
                     onClick={handleCopyStudentLink}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
-                    title="Salin Link Khusus Siswa"
+                    title="Salin Link Khusus Siswa (Multiplayer PeerJS)"
                   >
                     {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>
                       {copiedLink ? 'Tersalin!' : `Link Siswa (${roomCode})`}
                     </span>
                   </button>
+
+                  {onBuildStandaloneLink && (
+                    <button
+                      type="button"
+                      onClick={handleCopyStandaloneLink}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-600 border border-teal-400/35 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
+                      title="Cadangan jika Wi-Fi sekolah memblokir P2P: seluruh soal & pengaturan kelas dikemas langsung ke URL"
+                    >
+                      {copiedStandalone ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-200" />
+                      ) : (
+                        <Link2 className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {copiedStandalone
+                          ? 'Link Paket Tersalin!'
+                          : 'Salin Link Paket Soal (Mode Mandiri)'}
+                      </span>
+                    </button>
+                  )}
 
                   <select
                     aria-label="Mode Respawn"
@@ -815,6 +860,17 @@ export const GameHud: React.FC<GameHudProps> = ({
                   <Smile className="w-3.5 h-3.5 text-amber-300" />
                   <span>Emote</span>
                 </button>
+
+                {isStandaloneMode && essayDone && onFinishStandalone && (
+                  <button
+                    type="button"
+                    onClick={onFinishStandalone}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
+                  >
+                    <Trophy className="w-3.5 h-3.5" />
+                    <span>Selesai &amp; Lihat Nilai</span>
+                  </button>
+                )}
 
                 <span className="text-xs text-slate-300 px-2">
                   Respawn: <strong className="text-white">{RESPAWN_LABELS[settings.respawnMode]}</strong>

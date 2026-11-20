@@ -38,6 +38,11 @@ import {
   type PeerToHostMessage,
 } from './lib/peerRoom';
 import {
+  decodeStandalonePacket,
+  encodeStandaloneLink,
+  type DecodedStandalonePacket,
+} from './lib/standalonePacket';
+import {
   DEFAULT_STUDENT_AVATAR,
   DEFAULT_TEACHER_AVATAR,
   DIFFICULTY_LEVELS,
@@ -107,6 +112,8 @@ export function App() {
   const joinTimeoutRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const timeoutFallbackRef = useRef<number | null>(null);
+  const lastHostRxRef = useRef<number>(Date.now());
+  const connectAttemptTokenRef = useRef<number>(0);
 
   // Lobby & session UI state
   const [role, setRole] = useState<Role>('student');
@@ -134,6 +141,9 @@ export function App() {
   const [reconnectInfo, setReconnectInfo] = useState<StudentRestoreProgress | null>(null);
   const [lobbyError, setLobbyError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('');
+  const [standalonePacket, setStandalonePacket] = useState<DecodedStandalonePacket | null>(null);
+  const [isStandaloneMode, setIsStandaloneMode] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
 
   // In-game UI state
@@ -364,14 +374,20 @@ export function App() {
     syncHeadlampIntensity();
   }, [syncHeadlampIntensity]);
 
-  // --- Parse URL params (?role=student&room=KODE) & check localStorage reconnect ---
+  // --- Parse URL params (?role=student&room=KODE[&mode=standalone&pkg=...]) & check localStorage reconnect ---
   useEffect(() => {
     setIsTouchDevice('ontouchstart' in window || navigator.maxTouchPoints > 0);
     const params = new URLSearchParams(window.location.search);
     const urlRole = params.get('role');
     const urlRoom = params.get('room');
+    const urlPkg = params.get('pkg');
 
-    if (urlRole === 'student') {
+    const decodedPkg = urlPkg ? decodeStandalonePacket(urlPkg) : null;
+    if (decodedPkg) {
+      setStandalonePacket(decodedPkg);
+      setLockedStudentMode(true);
+      setRole('student');
+    } else if (urlRole === 'student') {
       setLockedStudentMode(true);
       setRole('student');
     }
@@ -381,9 +397,11 @@ export function App() {
       setAvatar(savedLobbyAvatar);
     }
 
-    const cleanRoom = urlRoom
-      ? urlRoom.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5)
-      : '';
+    const cleanRoom = decodedPkg?.roomCode
+      ? decodedPkg.roomCode
+      : urlRoom
+        ? urlRoom.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5)
+        : '';
     if (cleanRoom) {
       setRoomCodeInput(cleanRoom);
     }
@@ -964,18 +982,58 @@ export function App() {
       remainingSecRef.current = 0;
 
       const hostRoom = hostRoomRef.current;
+      const selfSummary: ParticipantSummary[] =
+        g.role === 'student'
+          ? [
+              {
+                id: g.clientId,
+                name: g.name,
+                avatar: g.avatar,
+                currentCP: g.currentCP,
+                score: g.score,
+                correctCount: g.correctCount,
+                wrongCount: g.wrongCount,
+                essayCorrect: g.essayCorrect,
+                essayWrong: g.essayWrong,
+                essayDone: g.essayDone,
+                fallCount: g.fallCount,
+                online: true,
+                finished: g.currentCP >= 25 && g.completedCPs.includes(25) && g.essayDone,
+              },
+            ]
+          : [];
+      const selfExport: ExportStudentRow[] =
+        g.role === 'student'
+          ? [
+              {
+                id: g.clientId,
+                name: g.name,
+                currentCP: g.currentCP,
+                score: g.score,
+                correctCount: g.correctCount,
+                wrongCount: g.wrongCount,
+                essayCorrect: g.essayCorrect,
+                essayWrong: g.essayWrong,
+                essayDone: g.essayDone,
+                fallCount: g.fallCount,
+                answers: g.answers,
+                essayAnswers: g.essayAnswers,
+              },
+            ]
+          : [];
+
       const finalLeaderboard =
         nextLeaderboard && nextLeaderboard.length > 0
           ? nextLeaderboard
           : hostRoom
             ? getHostParticipantsSnapshot(hostRoom.students)
-            : [];
+            : selfSummary;
       const finalExportRows =
         nextExportRows && nextExportRows.length > 0
           ? nextExportRows
           : hostRoom
             ? getHostExportRows(hostRoom.students)
-            : [];
+            : selfExport;
 
       setSessionEndReason(reason);
       setRemainingSec(0);
@@ -1021,6 +1079,25 @@ export function App() {
             if (!room) return;
             const msg = raw as PeerToHostMessage;
             if (!msg || typeof msg !== 'object' || !msg.type) return;
+
+            if (msg.type === 'ping') {
+              const sid = msg.id || boundStudentId;
+              if (sid) {
+                const stu = room.students.get(sid);
+                if (stu) stu.lastSeenAt = Date.now();
+              }
+              safeSendPeer(conn, { type: 'pong', ts: msg.ts });
+              return;
+            }
+
+            if (msg.type === 'pong') {
+              const sid = msg.id || boundStudentId;
+              if (sid) {
+                const stu = room.students.get(sid);
+                if (stu) stu.lastSeenAt = Date.now();
+              }
+              return;
+            }
 
             if (msg.type === 'join_room') {
               const studentId = String(
@@ -1068,6 +1145,7 @@ export function App() {
                 }
                 stu.conn = conn;
                 stu.online = true;
+                stu.lastSeenAt = Date.now();
                 stu.name = cleanName || stu.name;
                 stu.avatar = cleanAvatar;
                 if (rp) {
@@ -1108,6 +1186,7 @@ export function App() {
                   answers: Array.isArray(rp?.answers) ? rp.answers : [],
                   essayAnswers: Array.isArray(rp?.essayAnswers) ? rp.essayAnswers : [],
                   online: true,
+                  lastSeenAt: Date.now(),
                   pose: { x: 0, y: 4.0, z: 1080, yaw: 0, cp: 0, state: 'idle' },
                   conn,
                 };
@@ -1158,6 +1237,7 @@ export function App() {
               if (!sid) return;
               const stu = room.students.get(sid);
               if (!stu) return;
+              stu.lastSeenAt = Date.now();
               stu.pose = msg.pose;
               if (typeof msg.currentCP === 'number') stu.currentCP = msg.currentCP;
               if (typeof msg.score === 'number') stu.score = msg.score;
@@ -1178,6 +1258,7 @@ export function App() {
               if (!sid) return;
               const stu = room.students.get(sid);
               if (!stu) return;
+              stu.lastSeenAt = Date.now();
               stu.avatar = normalizeAvatarConfig(msg.avatar, 'student');
               upsertRemotePlayer({
                 id: stu.id,
@@ -1202,6 +1283,8 @@ export function App() {
             if (msg.type === 'player_emote') {
               const sid = msg.id || boundStudentId;
               if (!sid) return;
+              const stu = room.students.get(sid);
+              if (stu) stu.lastSeenAt = Date.now();
               const world = worldRef.current;
               const entry = world?.remotePlayers.get(sid);
               if (world && entry) {
@@ -1218,6 +1301,7 @@ export function App() {
               if (!sid) return;
               const stu = room.students.get(sid);
               if (!stu) return;
+              stu.lastSeenAt = Date.now();
               if (typeof msg.currentCP === 'number') stu.currentCP = Math.min(25, Math.max(0, msg.currentCP));
               if (Array.isArray(msg.completedCPs)) stu.completedCPs = msg.completedCPs;
               if (typeof msg.score === 'number') stu.score = msg.score;
@@ -1281,16 +1365,38 @@ export function App() {
   );
 
   const connectStudentPeer = useCallback(
-    (code: string, isReconnect = false) => {
+    (code: string, isReconnect = false, attempt = 0) => {
       cleanupPeer();
       const g = gameRef.current;
+      const myToken =
+        !isReconnect && attempt === 0
+          ? ++connectAttemptTokenRef.current
+          : connectAttemptTokenRef.current;
+
+      if (!isReconnect) {
+        setConnectionStatus(
+          attempt === 0
+            ? 'Menghubungkan ke ruang Guru...'
+            : `Percobaan ulang (${attempt}/3) — Menghubungkan ke ruang Guru...`,
+        );
+      }
 
       const handleHostPacket = (msg: HostToPeerMessage) => {
+        if (myToken !== connectAttemptTokenRef.current) return;
+        lastHostRxRef.current = Date.now();
         const cur = gameRef.current;
         const world = worldRef.current;
         switch (msg.type) {
+          case 'ping':
+            safeSendPeer(hostConnRef.current, { type: 'pong', id: cur.clientId, ts: msg.ts });
+            break;
+
+          case 'pong':
+            break;
+
           case 'error_msg':
             setIsConnecting(false);
+            setConnectionStatus('');
             setLobbyError(msg.message || 'Gagal bergabung ke ruangan.');
             break;
 
@@ -1300,6 +1406,7 @@ export function App() {
               joinTimeoutRef.current = null;
             }
             setIsConnecting(false);
+            setConnectionStatus('');
             setLobbyError('');
             if (msg.studentData) {
               cur.currentCP = msg.studentData.currentCP || 0;
@@ -1457,8 +1564,46 @@ export function App() {
 
           case 'session_ended':
             setIsConnecting(false);
+            setConnectionStatus('');
             applySessionEnded(msg.reason, msg.leaderboard, msg.exportRows);
             break;
+        }
+      };
+
+      let attemptSettled = false;
+      const scheduleRetryOrFail = (finalErrorMsg: string) => {
+        if (attemptSettled || myToken !== connectAttemptTokenRef.current) return;
+        attemptSettled = true;
+        cleanupPeer();
+
+        if (gameRef.current.inGame) {
+          if (!gameRef.current.sessionEnded && gameRef.current.role === 'student') {
+            showWarning('Koneksi ke Host Guru terputus. Menyambung ulang...', 3.0);
+            reconnectTimerRef.current = window.setTimeout(() => {
+              if (
+                myToken === connectAttemptTokenRef.current &&
+                gameRef.current.inGame &&
+                !gameRef.current.sessionEnded
+              ) {
+                connectStudentPeer(code, true, 0);
+              }
+            }, 1500);
+          }
+          return;
+        }
+
+        if (attempt < 3) {
+          const nextAttempt = attempt + 1;
+          setConnectionStatus(`Koneksi gagal, mencoba ulang (${nextAttempt}/3) dalam 1,5 detik...`);
+          joinTimeoutRef.current = window.setTimeout(() => {
+            if (myToken === connectAttemptTokenRef.current && !gameRef.current.inGame) {
+              connectStudentPeer(code, false, nextAttempt);
+            }
+          }, 1500);
+        } else {
+          setIsConnecting(false);
+          setConnectionStatus('');
+          setLobbyError(finalErrorMsg);
         }
       };
 
@@ -1469,21 +1614,25 @@ export function App() {
         if (!isReconnect) {
           joinTimeoutRef.current = window.setTimeout(() => {
             if (!gameRef.current.inGame) {
-              setIsConnecting(false);
-              cleanupPeer();
-              setLobbyError(
-                `Ruangan "${code}" tidak merespons atau Guru belum aktif. Periksa Kode Ruangan 5 karakter dari Guru.`,
+              scheduleRetryOrFail(
+                `Ruangan "${code}" tidak merespons setelah 3x percobaan. Periksa Kode Ruangan 5 digit atau minta Guru membagikan "Link Paket Soal (Mode Mandiri)".`,
               );
             }
-          }, 12000);
+          }, 6000);
         }
 
         peer.on('open', () => {
+          if (attemptSettled || myToken !== connectAttemptTokenRef.current) return;
           try {
             const conn = peer.connect(makeHostPeerId(code), { reliable: true });
             hostConnRef.current = conn;
 
             conn.on('open', () => {
+              if (attemptSettled || myToken !== connectAttemptTokenRef.current) return;
+              lastHostRxRef.current = Date.now();
+              if (!isReconnect) {
+                setConnectionStatus('Mengunduh paket soal...');
+              }
               const savedRaw = localStorage.getItem(`wowo_peak_session_${code}`);
               let saved: StudentRestoreProgress | null = null;
               if (savedRaw) {
@@ -1507,59 +1656,48 @@ export function App() {
             });
 
             conn.on('close', () => {
-              if (!gameRef.current.inGame) {
-                setIsConnecting(false);
-                setLobbyError(`Koneksi ke Ruangan "${code}" terputus.`);
-                return;
-              }
-              if (!gameRef.current.sessionEnded && gameRef.current.role === 'student') {
-                showWarning('Koneksi ke Host Guru terputus. Menyambung ulang...', 3.0);
-                if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
-                reconnectTimerRef.current = window.setTimeout(() => {
-                  if (gameRef.current.inGame && !gameRef.current.sessionEnded) {
-                    connectStudentPeer(code, true);
-                  }
-                }, 2500);
+              if (gameRef.current.inGame) {
+                if (!gameRef.current.sessionEnded && gameRef.current.role === 'student') {
+                  cleanupPeer();
+                  showWarning('Koneksi ke Host Guru terputus. Menyambung ulang...', 3.0);
+                  reconnectTimerRef.current = window.setTimeout(() => {
+                    if (
+                      myToken === connectAttemptTokenRef.current &&
+                      gameRef.current.inGame &&
+                      !gameRef.current.sessionEnded
+                    ) {
+                      connectStudentPeer(code, true, 0);
+                    }
+                  }, 1500);
+                }
+              } else {
+                scheduleRetryOrFail(`Koneksi ke Ruangan "${code}" terputus setelah 3x percobaan.`);
               }
             });
 
             conn.on('error', () => {
-              if (!gameRef.current.inGame) {
-                setIsConnecting(false);
-                cleanupPeer();
-                setLobbyError(
-                  `Tidak dapat terhubung ke Host Ruangan "${code}". Pastikan Guru sudah membuka ruangan.`,
-                );
-              }
+              scheduleRetryOrFail(
+                `Tidak dapat terhubung ke Host Ruangan "${code}". Pastikan Guru sudah membuka ruangan atau gunakan Link Paket Soal (Mode Mandiri).`,
+              );
             });
           } catch (connErr) {
             console.warn('PeerJS connect error:', connErr);
-            setIsConnecting(false);
-            cleanupPeer();
-            setLobbyError('Gagal membuka koneksi PeerJS ke ruangan Guru.');
+            scheduleRetryOrFail('Gagal membuka koneksi PeerJS ke ruangan Guru.');
           }
         });
 
         peer.on('error', (err) => {
           console.warn('PeerJS Client error:', err);
-          if (!gameRef.current.inGame) {
-            setIsConnecting(false);
-            cleanupPeer();
-            const isPeerUnavailable = String(err?.type || '').includes('peer-unavailable');
-            setLobbyError(
-              isPeerUnavailable
-                ? `Ruangan "${code}" tidak ditemukan. Pastikan Guru sudah menekan "Buat Ruangan Kelas".`
-                : `Koneksi PeerJS terhambat (${err?.message || 'jaringan/firewall'}). Coba lagi.`,
-            );
-          } else if (!gameRef.current.sessionEnded) {
-            showWarning('Sinyal P2P ke Guru terganggu sementara...', 3.0);
-          }
+          const isPeerUnavailable = String(err?.type || '').includes('peer-unavailable');
+          scheduleRetryOrFail(
+            isPeerUnavailable
+              ? `Ruangan "${code}" tidak ditemukan setelah 3x percobaan. Pastikan Guru sudah menekan "Buat Ruangan Kelas" atau minta "Link Paket Soal (Mode Mandiri)".`
+              : `Koneksi PeerJS terhambat (${err?.message || 'jaringan/firewall'}) setelah 3x percobaan. Gunakan "Link Paket Soal (Mode Mandiri)" dari Guru jika Wi-Fi sekolah memblokir P2P.`,
+          );
         });
       } catch (err) {
         console.warn('PeerJS Client init error:', err);
-        setIsConnecting(false);
-        cleanupPeer();
-        setLobbyError('Browser atau jaringan memblokir koneksi WebRTC PeerJS.');
+        scheduleRetryOrFail('Browser atau jaringan memblokir koneksi WebRTC PeerJS.');
       }
     },
     [
@@ -1574,6 +1712,45 @@ export function App() {
       upsertRemotePlayer,
     ],
   );
+
+  // Keep-Alive Heartbeat every 3s between Host & all connected Students
+  useEffect(() => {
+    if (!inGame || sessionEnded || isStandaloneMode) return;
+
+    const hbId = window.setInterval(() => {
+      const now = Date.now();
+      if (gameRef.current.role === 'teacher') {
+        const room = hostRoomRef.current;
+        if (!room) return;
+        for (const stu of room.students.values()) {
+          if (stu.conn && stu.conn.open) {
+            safeSendPeer(stu.conn, { type: 'ping', ts: now });
+          } else if (stu.online && now - stu.lastSeenAt > 18000) {
+            stu.online = false;
+            removeRemotePlayer(stu.id);
+            const snap = getHostParticipantsSnapshot(room.students);
+            setParticipants(snap);
+            broadcastToAllStudents(room, { type: 'player_left', id: stu.id });
+            broadcastToAllStudents(room, { type: 'participants_update', participants: snap });
+          }
+        }
+      } else if (gameRef.current.role === 'student') {
+        if (hostConnRef.current?.open) {
+          safeSendPeer(hostConnRef.current, {
+            type: 'ping',
+            id: gameRef.current.clientId,
+            ts: now,
+          });
+        }
+        if (now - lastHostRxRef.current > 12000) {
+          lastHostRxRef.current = now;
+          connectStudentPeer(gameRef.current.roomCode, true, 0);
+        }
+      }
+    }, 3000);
+
+    return () => window.clearInterval(hbId);
+  }, [connectStudentPeer, inGame, isStandaloneMode, removeRemotePlayer, sessionEnded]);
 
   // Host 100ms World State Broadcast (3D coords, rotation, animation, costume ID, CP, score)
   useEffect(() => {
@@ -2314,22 +2491,25 @@ export function App() {
     soundRef.current?.init();
 
     const cleanName = sanitizeName(studentName);
-    const code = roomCodeInput.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().trim();
+    const code = (standalonePacket?.roomCode || roomCodeInput)
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .trim();
     if (!cleanName) {
       setLobbyError('Masukkan nama siswa terlebih dahulu.');
       return;
     }
-    if (!/^[A-Z0-9]{5}$/.test(code)) {
+    if (!standalonePacket && !/^[A-Z0-9]{5}$/.test(code)) {
       setLobbyError('Masukkan kode ruangan 5 karakter yang valid.');
       return;
     }
 
+    const effectiveCode = code || 'MANDI';
     setStudentName(cleanName);
-    setRoomCodeInput(code);
+    setRoomCodeInput(effectiveCode);
     setLobbyError('');
-    setIsConnecting(true);
 
-    const savedRaw = localStorage.getItem(`wowo_peak_session_${code}`);
+    const savedRaw = localStorage.getItem(`wowo_peak_session_${effectiveCode}`);
     let saved: StudentRestoreProgress | null = null;
     if (savedRaw) {
       try {
@@ -2347,7 +2527,7 @@ export function App() {
     const g = gameRef.current;
     g.role = 'student';
     g.name = cleanName;
-    g.roomCode = code;
+    g.roomCode = effectiveCode;
     g.avatar = { ...avatar };
     g.clientId = studentId;
     g.sessionEnded = false;
@@ -2356,7 +2536,46 @@ export function App() {
     setClientIdState(studentId);
     setRole('student');
 
-    connectStudentPeer(code, false);
+    if (standalonePacket) {
+      setIsStandaloneMode(true);
+      setIsConnecting(false);
+      setConnectionStatus('');
+      if (saved) {
+        g.currentCP = typeof saved.currentCP === 'number' ? Math.min(25, Math.max(0, saved.currentCP)) : 0;
+        g.completedCPs = Array.isArray(saved.completedCPs) ? saved.completedCPs : [];
+        g.score = typeof saved.score === 'number' ? saved.score : 0;
+        g.correctCount = typeof saved.correctCount === 'number' ? saved.correctCount : 0;
+        g.wrongCount = typeof saved.wrongCount === 'number' ? saved.wrongCount : 0;
+        g.essayCorrect = typeof saved.essayCorrect === 'number' ? saved.essayCorrect : 0;
+        g.essayWrong = typeof saved.essayWrong === 'number' ? saved.essayWrong : 0;
+        g.essayDone = Boolean(saved.essayDone);
+        g.fallCount = typeof saved.fallCount === 'number' ? saved.fallCount : 0;
+        g.answers = Array.isArray(saved.answers) ? saved.answers : [];
+        g.essayAnswers = Array.isArray(saved.essayAnswers) ? saved.essayAnswers : [];
+      }
+      const totalSec = (standalonePacket.settings.sessionDurationMinutes || 20) * 60;
+      remainingSecRef.current = totalSec;
+      const standaloneState: PublicRoomState = {
+        roomCode: effectiveCode,
+        settings: standalonePacket.settings,
+        paused: false,
+        sessionEnded: false,
+        remainingSec: totalSec,
+        questionCount: standalonePacket.questions?.length || 25,
+        essayQuestionCount: standalonePacket.essayQuestions?.length || 5,
+        participants: [],
+      };
+      enterGameWorld(standaloneState, standalonePacket.questions, standalonePacket.essayQuestions);
+      showToastSuccess(
+        `Mode Mandiri aktif! Paket soal dari ${standalonePacket.teacherName} siap dikerjakan.`,
+      );
+      return;
+    }
+
+    setIsStandaloneMode(false);
+    setIsConnecting(true);
+    setConnectionStatus('Menghubungkan ke ruang Guru...');
+    connectStudentPeer(effectiveCode, false, 0);
   };
 
   const handleToggleAudio = () => {
@@ -2688,6 +2907,17 @@ export function App() {
           onJoinStudent={handleJoinStudent}
           onCreateRoom={handleCreateRoom}
           isConnecting={isConnecting}
+          connectionStatus={connectionStatus}
+          standalonePacketInfo={
+            standalonePacket
+              ? {
+                  roomCode: standalonePacket.roomCode,
+                  teacherName: standalonePacket.teacherName,
+                  questionCount: standalonePacket.questions?.length || 25,
+                  essayQuestionCount: standalonePacket.essayQuestions?.length || 5,
+                }
+              : null
+          }
         />
       )}
 
@@ -2733,6 +2963,18 @@ export function App() {
             gameRef.current.joyVec = { x, y };
           }}
           onMobileJump={tryJump}
+          isStandaloneMode={isStandaloneMode}
+          onBuildStandaloneLink={() => {
+            const room = hostRoomRef.current;
+            return encodeStandaloneLink({
+              roomCode: room?.code || roomCode,
+              teacherName: room?.teacherName || sanitizeName(teacherName) || 'Guru',
+              settings: room?.settings || settings,
+              questions: room ? room.questions : customQuestions,
+              essayQuestions: room ? room.essayQuestions : customEssayQuestions,
+            });
+          }}
+          onFinishStandalone={() => applySessionEnded('teacher')}
         />
       )}
 

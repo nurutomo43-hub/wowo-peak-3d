@@ -6,9 +6,11 @@ import {
   ChevronUp,
   Download,
   FileSpreadsheet,
+  Loader2,
   Lock,
   Mountain,
   RotateCcw,
+  ShieldCheck,
   Upload,
   User,
   UserCog,
@@ -63,6 +65,13 @@ interface LobbyModalProps {
   onJoinStudent: () => void;
   onCreateRoom: () => void;
   isConnecting?: boolean;
+  connectionStatus?: string;
+  standalonePacketInfo?: {
+    roomCode: string;
+    teacherName: string;
+    questionCount: number;
+    essayQuestionCount: number;
+  } | null;
 }
 
 export const LobbyModal: React.FC<LobbyModalProps> = ({
@@ -99,6 +108,8 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   onJoinStudent,
   onCreateRoom,
   isConnecting = false,
+  connectionStatus = '',
+  standalonePacketInfo = null,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const essayFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -207,6 +218,20 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                 <span>Buat Ruangan (Guru)</span>
               </button>
             </div>
+          ) : standalonePacketInfo ? (
+            <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-emerald-950/65 border border-emerald-500/45 text-sm text-emerald-100">
+              <ShieldCheck className="w-5 h-5 mt-0.5 text-emerald-400 shrink-0" />
+              <div>
+                <span className="font-semibold">
+                  Link Paket Soal Mandiri Aktif (Guru: {standalonePacketInfo.teacherName}).
+                </span>{' '}
+                Berisi{' '}
+                <strong className="font-mono-num">
+                  {standalonePacketInfo.questionCount} PG &amp; {standalonePacketInfo.essayQuestionCount} Isian
+                </strong>{' '}
+                yang terkemas di tautan — siswa bisa langsung mendaki tanpa terhalang firewall P2P sekolah.
+              </div>
+            </div>
           ) : (
             <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-sky-950/60 border border-sky-500/40 text-sm text-sky-100">
               <Lock className="w-4 h-4 mt-0.5 text-sky-400 shrink-0" />
@@ -306,11 +331,28 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                 type="button"
                 disabled={isConnecting}
                 onClick={onJoinStudent}
-                className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-wait text-white font-semibold text-base transition-colors cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-75 disabled:cursor-wait text-white font-semibold text-base transition-colors cursor-pointer"
               >
-                <Mountain className="w-5 h-5" />
-                <span>{isConnecting ? 'Menghubungkan ke Ruangan Guru...' : 'Mulai Pendakian'}</span>
+                {isConnecting ? (
+                  <Loader2 className="w-5 h-5 animate-spin shrink-0" />
+                ) : (
+                  <Mountain className="w-5 h-5 shrink-0" />
+                )}
+                <span>
+                  {isConnecting
+                    ? connectionStatus || 'Menghubungkan ke ruang Guru...'
+                    : standalonePacketInfo
+                      ? 'Mulai Pendakian (Mode Mandiri)'
+                      : 'Mulai Pendakian'}
+                </span>
               </button>
+
+              {isConnecting && (
+                <div className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-sky-950/80 border border-sky-500/45 text-xs sm:text-sm text-sky-100 text-center">
+                  <Loader2 className="w-4 h-4 animate-spin text-sky-400 shrink-0" />
+                  <span>{connectionStatus || 'Menghubungkan ke ruang Guru...'}</span>
+                </div>
+              )}
             </div>
           ) : (
             /* Teacher Create Room Form */

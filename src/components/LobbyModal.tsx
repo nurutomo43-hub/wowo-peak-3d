@@ -66,6 +66,7 @@ interface LobbyModalProps {
   onCreateRoom: () => void;
   isConnecting?: boolean;
   connectionStatus?: string;
+  supabaseConfigError?: string | null;
   standalonePacketInfo?: {
     roomCode: string;
     teacherName: string;
@@ -109,6 +110,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   onCreateRoom,
   isConnecting = false,
   connectionStatus = '',
+  supabaseConfigError = null,
   standalonePacketInfo = null,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -190,6 +192,20 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
         </div>
 
         <div className="p-5 sm:p-6 space-y-4 max-h-[78vh] overflow-y-auto">
+          {/* Supabase Env Validation Red Warning */}
+          {supabaseConfigError && !standalonePacketInfo && (
+            <div
+              role="alert"
+              className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-red-950/90 border border-red-500 text-sm text-red-100 shadow-lg"
+            >
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <div className="font-bold text-red-200">Peringatan Konfigurasi Supabase</div>
+                <div>{supabaseConfigError}</div>
+              </div>
+            </div>
+          )}
+
           {/* Role Switcher */}
           {!lockedStudentMode ? (
             <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-950 border border-white/10">
@@ -628,10 +644,18 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                 type="button"
                 disabled={isConnecting}
                 onClick={onCreateRoom}
-                className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-wait text-white font-semibold text-base transition-colors cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-75 disabled:cursor-wait text-white font-semibold text-base transition-colors cursor-pointer"
               >
-                <Mountain className="w-5 h-5" />
-                <span>Buat Ruangan Kelas (Mode Pemantau Kebal)</span>
+                {isConnecting ? (
+                  <Loader2 className="w-5 h-5 animate-spin shrink-0" />
+                ) : (
+                  <Mountain className="w-5 h-5 shrink-0" />
+                )}
+                <span>
+                  {isConnecting
+                    ? connectionStatus || 'Menyimpan ruangan ke Supabase...'
+                    : 'Buat Ruangan Kelas (Mode Pemantau Kebal)'}
+                </span>
               </button>
             </div>
           )}

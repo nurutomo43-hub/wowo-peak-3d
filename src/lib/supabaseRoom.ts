@@ -1,4 +1,4 @@
-import Peer, { type DataConnection } from 'peerjs';
+import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   AnswerRecord,
   AvatarConfig,
@@ -14,51 +14,59 @@ import type {
   RemotePlayerPayload,
   Role,
   RoomSettings,
-  StudentRestoreProgress,
 } from '../types/game';
 
-export const PEER_RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-  ],
-  iceTransportPolicy: 'all',
-};
+const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || '';
+const supabaseAnonKey =
+  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || '';
+
+let cachedClient: SupabaseClient | null = null;
+
+export function getSupabaseConfigError(): string | null {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return 'Konfigurasi Supabase belum diisi! Pastikan environment variable VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY sudah diatur di Netlify / .env.';
+  }
+  if (!/^https?:\/\//i.test(supabaseUrl)) {
+    return 'Format VITE_SUPABASE_URL tidak valid. Pastikan URL diawali https:// (contoh: https://xxxx.supabase.co).';
+  }
+  return null;
+}
+
+export function getSupabaseClient(): SupabaseClient {
+  const configErr = getSupabaseConfigError();
+  if (configErr) {
+    throw new Error(configErr);
+  }
+  if (!cachedClient) {
+    cachedClient = createClient(supabaseUrl, supabaseAnonKey, {
+      realtime: {
+        params: {
+          eventsPerSecond: 20,
+        },
+      },
+    });
+  }
+  return cachedClient;
+}
 
 export function generateRoomCode(): string {
   return String(Math.floor(10000 + Math.random() * 90000));
 }
 
-export function makeHostPeerId(roomCode: string): string {
-  return `wowo-peak-${roomCode.trim().toUpperCase()}`;
-}
-
-export function createPeerInstance(peerId?: string): Peer {
-  if (peerId) {
-    return new Peer(peerId, {
-      config: PEER_RTC_CONFIG,
-      debug: 1,
-    });
-  }
-  return new Peer({
-    config: PEER_RTC_CONFIG,
-    debug: 1,
-  });
+export interface SupabaseRoomConfig {
+  teacherId: string;
+  teacherName: string;
+  teacherAvatar: AvatarConfig;
+  settings: RoomSettings;
+  paused: boolean;
+  sessionEnded: boolean;
+  endReason?: 'teacher' | 'timeout';
+  remainingSec: number;
+  sessionEndsAt: number | null;
+  kickedIds: string[];
+  questions: QuizQuestion[] | null;
+  essayQuestions: EssayQuestion[] | null;
+  createdAt: number;
 }
 
 export interface HostStudentRecord {
@@ -79,7 +87,6 @@ export interface HostStudentRecord {
   online: boolean;
   lastSeenAt: number;
   pose: PlayerPose;
-  conn: DataConnection | null;
 }
 
 export interface HostRoomState {
@@ -94,46 +101,35 @@ export interface HostRoomState {
   sessionEnded: boolean;
   endReason?: 'teacher' | 'timeout';
   remainingSec: number;
+  sessionEndsAt: number | null;
   questions: QuizQuestion[] | null;
   essayQuestions: EssayQuestion[] | null;
   kickedIds: Set<string>;
   students: Map<string, HostStudentRecord>;
 }
 
-export type PeerToHostMessage =
+export type RoomBroadcastMessage =
   | {
-      type: 'ping';
-      id: string;
-      ts: number;
+      type: 'player_pose';
+      payload: RemotePlayerPayload;
     }
   | {
-      type: 'pong';
-      id: string;
-      ts: number;
-    }
-  | {
-      type: 'join_room';
+      type: 'student_join';
       studentId: string;
       name: string;
       avatar: AvatarConfig;
-      restoreProgress?: StudentRestoreProgress | null;
-    }
-  | {
-      type: 'player_pose';
-      id: string;
       currentCP: number;
+      completedCPs: number[];
       score: number;
+      correctCount: number;
+      wrongCount: number;
+      essayCorrect: number;
+      essayWrong: number;
+      essayDone: boolean;
+      fallCount: number;
+      answers: AnswerRecord[];
+      essayAnswers: EssayAnswerRecord[];
       pose: PlayerPose;
-    }
-  | {
-      type: 'update_avatar';
-      id: string;
-      avatar: AvatarConfig;
-    }
-  | {
-      type: 'player_emote';
-      id: string;
-      emote: EmoteType;
     }
   | {
       type: 'student_progress';
@@ -149,51 +145,9 @@ export type PeerToHostMessage =
       fallCount?: number;
       newAnswer?: AnswerRecord;
       newEssayAnswer?: EssayAnswerRecord;
-    };
-
-export type HostToPeerMessage =
-  | {
-      type: 'ping';
-      ts: number;
     }
   | {
-      type: 'pong';
-      ts: number;
-    }
-  | {
-      type: 'error_msg';
-      message: string;
-    }
-  | {
-      type: 'joined_room';
-      id: string;
-      name: string;
-      studentData: {
-        currentCP: number;
-        completedCPs: number[];
-        score: number;
-        correctCount: number;
-        wrongCount: number;
-        essayCorrect: number;
-        essayWrong: number;
-        essayDone: boolean;
-        fallCount: number;
-        answers: AnswerRecord[];
-        essayAnswers: EssayAnswerRecord[];
-      };
-      roomState: PublicRoomState;
-      questions: QuizQuestion[] | null;
-      essayQuestions: EssayQuestion[] | null;
-      players: RemotePlayerPayload[];
-    }
-  | {
-      type: 'world_state';
-      players: RemotePlayerPayload[];
-      remainingSec: number;
-      paused: boolean;
-    }
-  | {
-      type: 'player_avatar_updated';
+      type: 'update_avatar';
       id: string;
       role: Role;
       avatar: AvatarConfig;
@@ -202,10 +156,6 @@ export type HostToPeerMessage =
       type: 'player_emote';
       id: string;
       emote: EmoteType;
-    }
-  | {
-      type: 'player_left';
-      id: string;
     }
   | {
       type: 'participants_update';
@@ -240,6 +190,7 @@ export type HostToPeerMessage =
     }
   | {
       type: 'kicked';
+      targetId: string;
       message: string;
     }
   | {
@@ -249,12 +200,74 @@ export type HostToPeerMessage =
       exportRows: ExportStudentRow[];
     };
 
-export function safeSendPeer(conn: DataConnection | null | undefined, msg: PeerToHostMessage | HostToPeerMessage) {
-  if (!conn || !conn.open) return;
+export async function upsertSupabaseRoom(code: string, config: SupabaseRoomConfig): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('rooms')
+    .upsert({ code, config }, { onConflict: 'code' });
+
+  if (error) {
+    throw new Error(error.message || 'Gagal menyimpan data ruangan ke tabel rooms Supabase.');
+  }
+}
+
+export async function fetchSupabaseRoomConfig(code: string): Promise<SupabaseRoomConfig> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('rooms')
+    .select('config')
+    .eq('code', code)
+    .single();
+
+  if (error) {
+    throw new Error(error.message || `Ruangan "${code}" tidak ditemukan di Supabase.`);
+  }
+  if (!data || !data.config) {
+    throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
+  }
+  return data.config as SupabaseRoomConfig;
+}
+
+export function buildSupabaseRoomConfig(room: HostRoomState): SupabaseRoomConfig {
+  return {
+    teacherId: room.teacherId,
+    teacherName: room.teacherName,
+    teacherAvatar: room.teacherAvatar,
+    settings: room.settings,
+    paused: room.paused,
+    sessionEnded: room.sessionEnded,
+    endReason: room.endReason,
+    remainingSec: Math.max(0, Math.round(room.remainingSec)),
+    sessionEndsAt: room.sessionEndsAt,
+    kickedIds: Array.from(room.kickedIds),
+    questions: room.questions,
+    essayQuestions: room.essayQuestions,
+    createdAt: Date.now(),
+  };
+}
+
+export function createRoomRealtimeChannel(roomCode: string): RealtimeChannel {
+  const supabase = getSupabaseClient();
+  return supabase.channel(`room-${roomCode}`, {
+    config: {
+      broadcast: { self: false },
+    },
+  });
+}
+
+export function sendRoomBroadcast(
+  channel: RealtimeChannel | null | undefined,
+  msg: RoomBroadcastMessage,
+) {
+  if (!channel) return;
   try {
-    conn.send(msg);
+    void channel.send({
+      type: 'broadcast',
+      event: 'room_event',
+      payload: msg,
+    });
   } catch {
-    // ignore transient WebRTC DataChannel send errors
+    // ignore transient channel send errors
   }
 }
 
@@ -273,7 +286,7 @@ export function getHostParticipantsSnapshot(
     essayWrong: s.essayWrong,
     essayDone: s.essayDone,
     fallCount: s.fallCount,
-    online: Boolean(s.online && s.conn && s.conn.open),
+    online: s.online,
     finished: s.currentCP >= 25 && s.completedCPs.includes(25) && s.essayDone,
   }));
 
@@ -305,36 +318,6 @@ export function getHostExportRows(students: Map<string, HostStudentRecord>): Exp
   }));
 }
 
-export function collectHostPlayersPayload(room: HostRoomState): RemotePlayerPayload[] {
-  const players: RemotePlayerPayload[] = [
-    {
-      id: room.teacherId,
-      role: 'teacher',
-      name: room.teacherName,
-      avatar: room.teacherAvatar,
-      currentCP: room.teacherCP,
-      score: 0,
-      pose: room.teacherPose,
-    },
-  ];
-
-  for (const s of room.students.values()) {
-    if (s.online && s.conn && s.conn.open) {
-      players.push({
-        id: s.id,
-        role: 'student',
-        name: s.name,
-        avatar: s.avatar,
-        currentCP: s.currentCP,
-        score: s.score,
-        pose: s.pose,
-      });
-    }
-  }
-
-  return players;
-}
-
 export function getHostPublicRoomState(room: HostRoomState): PublicRoomState {
   return {
     roomCode: room.code,
@@ -346,17 +329,4 @@ export function getHostPublicRoomState(room: HostRoomState): PublicRoomState {
     essayQuestionCount: room.essayQuestions ? room.essayQuestions.length : 5,
     participants: getHostParticipantsSnapshot(room.students),
   };
-}
-
-export function broadcastToAllStudents(
-  room: HostRoomState,
-  msg: HostToPeerMessage,
-  excludeStudentId?: string,
-) {
-  for (const stu of room.students.values()) {
-    if (excludeStudentId && stu.id === excludeStudentId) continue;
-    if (stu.conn && stu.conn.open) {
-      safeSendPeer(stu.conn, msg);
-    }
-  }
 }

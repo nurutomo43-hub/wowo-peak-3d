@@ -62,6 +62,7 @@ interface LobbyModalProps {
   onToastSuccess: (msg: string) => void;
   onJoinStudent: () => void;
   onCreateRoom: () => void;
+  isConnecting?: boolean;
 }
 
 export const LobbyModal: React.FC<LobbyModalProps> = ({
@@ -97,6 +98,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   onToastSuccess,
   onJoinStudent,
   onCreateRoom,
+  isConnecting = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const essayFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -299,11 +301,12 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
 
               <button
                 type="button"
+                disabled={isConnecting}
                 onClick={onJoinStudent}
-                className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-base transition-colors cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-wait text-white font-semibold text-base transition-colors cursor-pointer"
               >
                 <Mountain className="w-5 h-5" />
-                <span>Mulai Pendakian</span>
+                <span>{isConnecting ? 'Mengambil Data Ruangan...' : 'Mulai Pendakian'}</span>
               </button>
             </div>
           ) : (
@@ -578,11 +581,16 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
 
               <button
                 type="button"
+                disabled={isConnecting}
                 onClick={onCreateRoom}
-                className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-semibold text-base transition-colors cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-wait text-white font-semibold text-base transition-colors cursor-pointer"
               >
                 <Mountain className="w-5 h-5" />
-                <span>Buat Ruangan Kelas (Mode Pemantau Kebal)</span>
+                <span>
+                  {isConnecting
+                    ? 'Menyimpan Ruangan ke Supabase...'
+                    : 'Buat Ruangan Kelas (Mode Pemantau Kebal)'}
+                </span>
               </button>
             </div>
           )}

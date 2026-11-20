@@ -287,6 +287,22 @@ export interface PublicRoomState {
   participants: ParticipantSummary[];
 }
 
+export interface SupabaseRoomConfig {
+  teacherId: string;
+  teacherName: string;
+  teacherAvatar: AvatarConfig;
+  settings: RoomSettings;
+  paused: boolean;
+  sessionEnded: boolean;
+  endReason?: 'teacher' | 'timeout';
+  remainingSec: number;
+  sessionEndsAt: number | null;
+  kickedIds: string[];
+  questions: QuizQuestion[] | null;
+  essayQuestions: EssayQuestion[] | null;
+  createdAt: number;
+}
+
 export interface PlayerPose {
   x: number;
   y: number;

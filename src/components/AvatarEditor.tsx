@@ -226,8 +226,8 @@ function detectSoftwarePreviewGl(): boolean {
     const gl = c.getContext('webgl2') || c.getContext('webgl');
     if (!gl) return true;
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
-    if (!ext) return false;
-    const r = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '');
+    const r = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '') : '';
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
     return /SwiftShader|llvmpipe|Software Rasterizer|Apple Paravirtual/i.test(r);
   } catch {
     return false;
@@ -277,7 +277,9 @@ export const AvatarPreview3D: React.FC<{ avatar: AvatarConfig; role?: Role }> = 
 
     const scene = new THREE.Scene();
     const pmrem = new THREE.PMREMGenerator(renderer);
-    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const roomEnv = new RoomEnvironment();
+    const envTex = pmrem.fromScene(roomEnv, 0.04).texture;
+    roomEnv.dispose();
     scene.environment = envTex;
     pmrem.dispose();
 

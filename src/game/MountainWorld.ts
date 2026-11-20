@@ -468,7 +468,9 @@ export class MountainWorld {
     container.appendChild(this.renderer.domElement);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.envMapTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const roomEnv = new RoomEnvironment();
+    this.envMapTexture = pmrem.fromScene(roomEnv, 0.04).texture;
+    roomEnv.dispose();
     this.scene.environment = this.envMapTexture;
     this.scene.environmentIntensity = 0.36;
     pmrem.dispose();

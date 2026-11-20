@@ -104,11 +104,15 @@ export function computeFinalGrade(
   essayCorrect: number,
   pgWeight = 75,
   essayWeight = 25,
+  pgTotal = 25,
+  essayTotal = 5,
 ): { pgScore: number; essayScore: number; totalScore: number; totalCorrect: number } {
-  const clampedPg = Math.max(0, Math.min(25, pgCorrect));
-  const clampedEssay = Math.max(0, Math.min(5, essayCorrect));
-  const pgScore = Number(((clampedPg / 25) * pgWeight).toFixed(2));
-  const essayScore = Number(((clampedEssay / 5) * essayWeight).toFixed(2));
+  const safePgTotal = Math.max(1, pgTotal);
+  const safeEssayTotal = Math.max(1, essayTotal);
+  const clampedPg = Math.max(0, Math.min(safePgTotal, pgCorrect));
+  const clampedEssay = Math.max(0, Math.min(safeEssayTotal, essayCorrect));
+  const pgScore = Number(((clampedPg / safePgTotal) * pgWeight).toFixed(2));
+  const essayScore = Number(((clampedEssay / safeEssayTotal) * essayWeight).toFixed(2));
   const totalScore = Number((pgScore + essayScore).toFixed(2));
   return {
     pgScore,
@@ -116,6 +120,75 @@ export function computeFinalGrade(
     totalScore,
     totalCorrect: clampedPg + clampedEssay,
   };
+}
+
+export const CUSTOM_PG_STORAGE_KEY = 'wowo_peak_custom_pg_v1';
+export const CUSTOM_ESSAY_STORAGE_KEY = 'wowo_peak_custom_essay_v1';
+
+export function saveCustomPgToStorage(questions: QuizQuestion[], fileName: string) {
+  try {
+    localStorage.setItem(CUSTOM_PG_STORAGE_KEY, JSON.stringify({ fileName, questions }));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+export function loadCustomPgFromStorage(): { fileName: string; questions: QuizQuestion[] } | null {
+  try {
+    const raw = localStorage.getItem(CUSTOM_PG_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { fileName?: string; questions?: QuizQuestion[] };
+    if (Array.isArray(parsed?.questions) && parsed.questions.length > 0) {
+      return {
+        fileName: parsed.fileName || 'Soal_PG_Kustom.xlsx',
+        questions: parsed.questions,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearCustomPgFromStorage() {
+  try {
+    localStorage.removeItem(CUSTOM_PG_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export function saveCustomEssayToStorage(questions: EssayQuestion[], fileName: string) {
+  try {
+    localStorage.setItem(CUSTOM_ESSAY_STORAGE_KEY, JSON.stringify({ fileName, questions }));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+export function loadCustomEssayFromStorage(): { fileName: string; questions: EssayQuestion[] } | null {
+  try {
+    const raw = localStorage.getItem(CUSTOM_ESSAY_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { fileName?: string; questions?: EssayQuestion[] };
+    if (Array.isArray(parsed?.questions) && parsed.questions.length > 0) {
+      return {
+        fileName: parsed.fileName || 'Soal_Isian_Kustom.xlsx',
+        questions: parsed.questions,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearCustomEssayFromStorage() {
+  try {
+    localStorage.removeItem(CUSTOM_ESSAY_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 function hashSeed(str: string): number {
@@ -259,99 +332,305 @@ export function downloadEssayTemplateExcel() {
   XLSX.writeFile(wb, 'Template_Isian_Singkat_WOWO.xlsx');
 }
 
-export async function parseExcelQuestions(
-  file: File,
-): Promise<{ questions: QuizQuestion[]; warnings: string[] }> {
-  const buffer = await file.arrayBuffer();
-  const wb = XLSX.read(buffer, { type: 'array' });
-  const firstSheet = wb.SheetNames[0];
-  if (!firstSheet) throw new Error('File Excel PG kosong.');
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[firstSheet], {
-    defval: '',
-  });
+function normHeader(val: unknown): string {
+  return String(val ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_.:*()\[\]-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
+function cellStr(row: unknown[], idx: number): string {
+  if (idx < 0 || idx >= row.length) return '';
+  const v = row[idx];
+  return v === null || v === undefined ? '' : String(v).trim();
+}
+
+function isRowEmpty(row: unknown[]): boolean {
+  return row.every((c) => String(c ?? '').trim() === '');
+}
+
+async function readWorkbookFromFile(file: File, label: string): Promise<XLSX.WorkBook> {
+  const nameLower = file.name.toLowerCase();
+  if (!/\.(xlsx|xls|csv)$/i.test(nameLower)) {
+    throw new Error(
+      `Format file "${file.name}" tidak didukung untuk ${label}. Gunakan file .xlsx, .xls, atau .csv.`,
+    );
+  }
+  if (file.size === 0) {
+    throw new Error(`File "${file.name}" kosong (0 byte).`);
+  }
+
+  try {
+    if (nameLower.endsWith('.csv')) {
+      const textRaw = await file.text();
+      const text = textRaw.replace(/^\uFEFF/, '');
+      if (!text.trim()) {
+        throw new Error(`File CSV "${file.name}" tidak berisi data.`);
+      }
+      const firstLine = text.split(/\r?\n/).find((l) => l.trim().length > 0) || '';
+      const semiCount = (firstLine.match(/;/g) || []).length;
+      const commaCount = (firstLine.match(/,/g) || []).length;
+      const tabCount = (firstLine.match(/\t/g) || []).length;
+      const FS = tabCount > commaCount && tabCount > semiCount ? '\t' : semiCount > commaCount ? ';' : ',';
+      return XLSX.read(text, { type: 'string', FS });
+    }
+    const buffer = await file.arrayBuffer();
+    return XLSX.read(buffer, { type: 'array' });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('File')) throw err;
+    throw new Error(
+      `File "${file.name}" rusak atau bukan dokumen Excel/CSV yang valid.`,
+    );
+  }
+}
+
+function resolvePgAnswerKey(
+  rawKey: string,
+  options: { A: string; B: string; C: string; D: string },
+): 'A' | 'B' | 'C' | 'D' | null {
+  const trimmed = String(rawKey || '').trim();
+  if (!trimmed) return null;
+
+  const upper = trimmed.toUpperCase();
+  if (upper === 'A' || upper === 'B' || upper === 'C' || upper === 'D') {
+    return upper;
+  }
+
+  const prefixMatch = trimmed.match(/^(?:opsi|pilihan|jawaban|huruf)?\s*([A-D])(?:\s*[.):-]\s*.*)?$/i);
+  if (prefixMatch) {
+    return prefixMatch[1].toUpperCase() as 'A' | 'B' | 'C' | 'D';
+  }
+
+  const normKey = normalizeEssayText(trimmed);
+  if (normKey) {
+    for (const letter of ['A', 'B', 'C', 'D'] as const) {
+      if (normalizeEssayText(options[letter]) === normKey) {
+        return letter;
+      }
+    }
+  }
+
+  return null;
+}
+
+export function parsePgRowsFromAoA(
+  aoa: unknown[][],
+): { questions: QuizQuestion[]; warnings: string[] } {
+  const nonEmptyRows = aoa.filter((r) => Array.isArray(r) && !isRowEmpty(r));
+  if (nonEmptyRows.length === 0) {
+    throw new Error('Sheet pertama file Excel PG kosong. Isi soal terlebih dahulu.');
+  }
+
+  const Q_ALIASES = ['pertanyaan', 'soal', 'question', 'butir soal', 'teks soal', 'isi soal'];
+  const A_ALIASES = ['pilihan a', 'opsi a', 'jawaban a', 'pil a', 'a'];
+  const B_ALIASES = ['pilihan b', 'opsi b', 'jawaban b', 'pil b', 'b'];
+  const C_ALIASES = ['pilihan c', 'opsi c', 'jawaban c', 'pil c', 'c'];
+  const D_ALIASES = ['pilihan d', 'opsi d', 'jawaban d', 'pil d', 'd'];
+  const KEY_ALIASES = ['kunci jawaban', 'kunci', 'jawaban', 'answer', 'kunci soal', 'kj', 'jawaban benar'];
+  const EXP_ALIASES = ['pembahasan', 'penjelasan', 'explanation', 'keterangan', 'uraian'];
+
+  const findCol = (normed: string[], aliases: string[], prefixOk = false) =>
+    normed.findIndex(
+      (h) => aliases.includes(h) || (prefixOk && aliases.some((al) => al.length > 2 && h.startsWith(al))),
+    );
+
+  let headerIdx = -1;
+  let qCol = -1;
+  let aCol = -1;
+  let bCol = -1;
+  let cCol = -1;
+  let dCol = -1;
+  let keyCol = -1;
+  let expCol = -1;
+
+  for (let r = 0; r < Math.min(6, nonEmptyRows.length); r++) {
+    const normed = nonEmptyRows[r].map(normHeader);
+    const qc = findCol(normed, Q_ALIASES, true);
+    const ac = findCol(normed, A_ALIASES, false);
+    const bc = findCol(normed, B_ALIASES, false);
+    const cc = findCol(normed, C_ALIASES, false);
+    const dc = findCol(normed, D_ALIASES, false);
+    const kc = findCol(normed, KEY_ALIASES, true);
+    const ec = findCol(normed, EXP_ALIASES, true);
+
+    if ((qc >= 0 && (ac >= 0 || kc >= 0)) || (ac >= 0 && bc >= 0 && kc >= 0)) {
+      headerIdx = r;
+      qCol = qc;
+      aCol = ac;
+      bCol = bc;
+      cCol = cc;
+      dCol = dc;
+      keyCol = kc;
+      expCol = ec;
+      break;
+    }
+  }
+
+  const startRow = headerIdx >= 0 ? headerIdx + 1 : 0;
   const parsed: QuizQuestion[] = [];
   const warnings: string[] = [];
 
-  rawRows.forEach((row, idx) => {
-    const getCol = (names: string[]) => {
-      for (const k of Object.keys(row)) {
-        const norm = k.trim().toLowerCase();
-        if (names.includes(norm)) return String(row[k]).trim();
-      }
-      return '';
-    };
+  for (let r = startRow; r < nonEmptyRows.length; r++) {
+    const row = nonEmptyRows[r];
+    if (isRowEmpty(row)) continue;
 
-    const question = getCol(['pertanyaan', 'soal', 'question']);
-    const A = getCol(['pilihan a', 'opsi a', 'a']);
-    const B = getCol(['pilihan b', 'opsi b', 'b']);
-    const C = getCol(['pilihan c', 'opsi c', 'c']);
-    const D = getCol(['pilihan d', 'opsi d', 'd']);
-    const key = getCol(['kunci jawaban', 'kunci', 'jawaban', 'answer']).toUpperCase();
-    const explanation = getCol(['pembahasan', 'penjelasan', 'explanation']);
+    let question = '';
+    let A = '';
+    let B = '';
+    let C = '';
+    let D = '';
+    let rawKey = '';
+    let explanation = '';
 
-    if (!question && !A && !B) return;
+    if (headerIdx >= 0) {
+      question = cellStr(row, qCol);
+      A = cellStr(row, aCol);
+      B = cellStr(row, bCol);
+      C = cellStr(row, cCol);
+      D = cellStr(row, dCol);
+      rawKey = cellStr(row, keyCol);
+      explanation = cellStr(row, expCol);
+    } else {
+      // Headerless fallback: check whether Column 1 (index 0) is "No" (e.g. 1, 2, 3...)
+      const col0 = cellStr(row, 0);
+      const hasNoCol = /^\d+[.)]?$/.test(col0) && row.length >= 7;
+      const off = hasNoCol ? 1 : 0;
+      question = cellStr(row, off);
+      A = cellStr(row, off + 1);
+      B = cellStr(row, off + 2);
+      C = cellStr(row, off + 3);
+      D = cellStr(row, off + 4);
+      rawKey = cellStr(row, off + 5);
+      explanation = cellStr(row, off + 6);
+    }
 
-    if (!question || !A || !B || !C || !D || !['A', 'B', 'C', 'D'].includes(key)) {
-      warnings.push(`Baris ${idx + 2} tidak lengkap atau Kunci Jawaban bukan A/B/C/D.`);
-      return;
+    if (!question && !A && !B && !C && !D) continue;
+
+    const resolvedKey = resolvePgAnswerKey(rawKey, { A, B, C, D });
+    if (!question || !A || !B || !C || !D || !resolvedKey) {
+      warnings.push(
+        `Baris ${r + 1} dilewati: ${
+          !question
+            ? 'Pertanyaan kosong'
+            : !A || !B || !C || !D
+              ? 'Opsi A/B/C/D belum lengkap'
+              : `Kunci Jawaban "${rawKey || '-'}" tidak cocok dengan A/B/C/D atau teks opsi`
+        }.`,
+      );
+      continue;
     }
 
     parsed.push({
       no: parsed.length + 1,
       question,
       options: { A, B, C, D },
-      answer: key as 'A' | 'B' | 'C' | 'D',
+      answer: resolvedKey,
       explanation,
     });
-  });
+  }
 
   if (parsed.length === 0) {
-    throw new Error(warnings[0] || 'Tidak ada baris soal PG valid yang ditemukan pada file.');
+    const hint =
+      headerIdx < 0
+        ? 'Pastikan kolom header berisi: Pertanyaan (atau Soal), Opsi A–D (atau A–D), dan Kunci Jawaban (atau Kunci) — atau susun tanpa header: No, Pertanyaan, A, B, C, D, Kunci.'
+        : warnings[0] || 'Semua baris soal tidak lengkap.';
+    throw new Error(`Tidak ada soal PG valid yang ditemukan. ${hint}`);
   }
 
   return { questions: parsed, warnings };
 }
 
-export async function parseEssayExcelQuestions(
+export async function parseExcelQuestions(
   file: File,
-): Promise<{ questions: EssayQuestion[]; warnings: string[] }> {
-  const buffer = await file.arrayBuffer();
-  const wb = XLSX.read(buffer, { type: 'array' });
+): Promise<{ questions: QuizQuestion[]; warnings: string[] }> {
+  const wb = await readWorkbookFromFile(file, 'Soal PG');
   const firstSheet = wb.SheetNames[0];
-  if (!firstSheet) throw new Error('File Excel Isian Singkat kosong.');
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[firstSheet], {
+  if (!firstSheet) {
+    throw new Error('File Excel PG tidak memiliki sheet yang dapat dibaca.');
+  }
+  const aoa = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[firstSheet], {
+    header: 1,
     defval: '',
   });
+  return parsePgRowsFromAoA(aoa);
+}
 
+export function parseEssayRowsFromAoA(
+  aoa: unknown[][],
+): { questions: EssayQuestion[]; warnings: string[] } {
+  const nonEmptyRows = aoa.filter((r) => Array.isArray(r) && !isRowEmpty(r));
+  if (nonEmptyRows.length === 0) {
+    throw new Error('Sheet pertama file Excel Isian Singkat kosong. Isi soal terlebih dahulu.');
+  }
+
+  const Q_ALIASES = ['pertanyaan', 'soal', 'question', 'butir soal', 'teks soal', 'isi soal'];
+  const KEY_ALIASES = [
+    'kunci jawaban',
+    'kunci',
+    'jawaban',
+    'answer',
+    'kunci soal',
+    'kj',
+    'kunci jawaban bisa dipisah dengan / atau ;',
+  ];
+  const EXP_ALIASES = ['pembahasan', 'penjelasan', 'explanation', 'keterangan', 'uraian'];
+
+  const findCol = (normed: string[], aliases: string[]) =>
+    normed.findIndex((h) => aliases.includes(h) || aliases.some((al) => al.length > 3 && h.startsWith(al)));
+
+  let headerIdx = -1;
+  let qCol = -1;
+  let keyCol = -1;
+  let expCol = -1;
+
+  for (let r = 0; r < Math.min(6, nonEmptyRows.length); r++) {
+    const normed = nonEmptyRows[r].map(normHeader);
+    const qc = findCol(normed, Q_ALIASES);
+    const kc = findCol(normed, KEY_ALIASES);
+    const ec = findCol(normed, EXP_ALIASES);
+    if (qc >= 0 && kc >= 0) {
+      headerIdx = r;
+      qCol = qc;
+      keyCol = kc;
+      expCol = ec;
+      break;
+    }
+  }
+
+  const startRow = headerIdx >= 0 ? headerIdx + 1 : 0;
   const parsed: EssayQuestion[] = [];
   const warnings: string[] = [];
 
-  rawRows.forEach((row, idx) => {
-    const getCol = (names: string[]) => {
-      for (const k of Object.keys(row)) {
-        const norm = k.trim().toLowerCase();
-        if (names.includes(norm)) return String(row[k]).trim();
-      }
-      return '';
-    };
+  for (let r = startRow; r < nonEmptyRows.length; r++) {
+    const row = nonEmptyRows[r];
+    if (isRowEmpty(row)) continue;
 
-    const question = getCol(['pertanyaan', 'soal', 'question']);
-    const rawKey = getCol([
-      'kunci jawaban',
-      'kunci',
-      'jawaban',
-      'answer',
-      'kunci jawaban (bisa dipisah dengan / atau ;)',
-    ]);
-    const explanation = getCol(['pembahasan', 'penjelasan', 'explanation']);
+    let question = '';
+    let rawKey = '';
+    let explanation = '';
 
-    if (!question && !rawKey) return;
+    if (headerIdx >= 0) {
+      question = cellStr(row, qCol);
+      rawKey = cellStr(row, keyCol);
+      explanation = cellStr(row, expCol);
+    } else {
+      // Headerless fallback: check whether Column 1 (index 0) is "No"
+      const col0 = cellStr(row, 0);
+      const hasNoCol = /^\d+[.)]?$/.test(col0) && row.length >= 3;
+      const off = hasNoCol ? 1 : 0;
+      question = cellStr(row, off);
+      rawKey = cellStr(row, off + 1);
+      explanation = cellStr(row, off + 2);
+    }
+
+    if (!question && !rawKey) continue;
 
     const acceptedAnswers = splitAcceptedKeys(rawKey);
     if (!question || acceptedAnswers.length === 0) {
-      warnings.push(`Baris ${idx + 2} Isian Singkat tidak memiliki pertanyaan atau kunci jawaban.`);
-      return;
+      warnings.push(`Baris ${r + 1} Isian Singkat tidak memiliki pertanyaan atau kunci jawaban.`);
+      continue;
     }
 
     parsed.push({
@@ -361,14 +640,19 @@ export async function parseEssayExcelQuestions(
       rawKey,
       explanation,
     });
-  });
+  }
 
   if (parsed.length === 0) {
-    throw new Error(warnings[0] || 'Tidak ada soal Isian Singkat valid yang ditemukan.');
+    const hint =
+      headerIdx < 0
+        ? 'Pastikan kolom header berisi: Pertanyaan (atau Soal) dan Kunci Jawaban (atau Kunci) — atau susun tanpa header: No, Pertanyaan, Kunci Jawaban, Pembahasan.'
+        : warnings[0] || 'Semua baris soal Isian Singkat tidak lengkap.';
+    throw new Error(`Tidak ada soal Isian Singkat valid yang ditemukan. ${hint}`);
   }
+
   if (parsed.length < 5) {
-    throw new Error(
-      `Ditemukan ${parsed.length} soal Isian Singkat. Wajib berisi minimal 5 soal untuk Pos Ujian Puncak.`,
+    warnings.push(
+      `Terbaca ${parsed.length} soal Isian Singkat (disarankan 5 soal untuk Pos Ujian Puncak).`,
     );
   }
 
@@ -376,6 +660,21 @@ export async function parseEssayExcelQuestions(
     questions: parsed.slice(0, 5).map((q, i) => ({ ...q, no: i + 1 })),
     warnings,
   };
+}
+
+export async function parseEssayExcelQuestions(
+  file: File,
+): Promise<{ questions: EssayQuestion[]; warnings: string[] }> {
+  const wb = await readWorkbookFromFile(file, 'Soal Isian Singkat');
+  const firstSheet = wb.SheetNames[0];
+  if (!firstSheet) {
+    throw new Error('File Excel Isian Singkat tidak memiliki sheet yang dapat dibaca.');
+  }
+  const aoa = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[firstSheet], {
+    header: 1,
+    defval: '',
+  });
+  return parseEssayRowsFromAoA(aoa);
 }
 
 export function exportResultsToExcel(

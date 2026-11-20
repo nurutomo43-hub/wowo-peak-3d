@@ -1,9 +1,11 @@
 import React, { useRef, useState } from 'react';
 import {
   Activity,
+  AlertCircle,
   BatteryCharging,
   Camera,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Clock,
@@ -72,6 +74,8 @@ interface GameHudProps {
   participants: ParticipantSummary[];
   questionCount: number;
   essayQuestionCount: number;
+  pgFileName: string;
+  essayFileName: string;
   warningText: string;
   isTouchDevice: boolean;
   onResetCamera: () => void;
@@ -79,8 +83,9 @@ interface GameHudProps {
   onToggleLowGraphics: () => void;
   onUpdateSettings: (partial: Partial<RoomSettings>) => void;
   onUpdateAvatar: (next: AvatarConfig) => void;
-  onUpdateQuestions: (questions: QuizQuestion[] | null) => void;
-  onUpdateEssayQuestions: (questions: EssayQuestion[] | null) => void;
+  onUpdateQuestions: (questions: QuizQuestion[] | null, fileName?: string) => void;
+  onUpdateEssayQuestions: (questions: EssayQuestion[] | null, fileName?: string) => void;
+  onToastSuccess: (msg: string) => void;
   onTriggerEmote: (emote: EmoteType) => void;
   onTeleport: (cpIndex: number) => void;
   onTriggerEvent: (eventType: DisasterEventType) => void;
@@ -131,6 +136,8 @@ export const GameHud: React.FC<GameHudProps> = ({
   participants,
   questionCount,
   essayQuestionCount,
+  pgFileName,
+  essayFileName,
   warningText,
   isTouchDevice,
   onResetCamera,
@@ -140,6 +147,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onUpdateAvatar,
   onUpdateQuestions,
   onUpdateEssayQuestions,
+  onToastSuccess,
   onTriggerEmote,
   onTeleport,
   onTriggerEvent,
@@ -158,7 +166,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   const [avatarModalOpen, setAvatarModalOpen] = useState(false);
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
-  const [excelMsg, setExcelMsg] = useState('');
+  const [excelStatus, setExcelStatus] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [draftAvatar, setDraftAvatar] = useState<AvatarConfig>(avatar);
 
   const excelInputRef = useRef<HTMLInputElement | null>(null);
@@ -193,26 +201,50 @@ export const GameHud: React.FC<GameHudProps> = ({
   };
 
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     try {
       const res = await parseExcelQuestions(file);
-      onUpdateQuestions(res.questions);
-      setExcelMsg(`${res.questions.length} soal PG berhasil disinkronkan ke seluruh siswa.`);
+      onUpdateQuestions(res.questions, file.name);
+      const toastText = `Berhasil mengimpor ${res.questions.length} Soal PG dari ${file.name}!`;
+      const warnNote = res.warnings.length > 0 ? ` (${res.warnings[0]})` : '';
+      setExcelStatus({
+        type: 'ok',
+        text: `${toastText} Langsung disinkronkan ke seluruh siswa.${warnNote}`,
+      });
+      onToastSuccess(toastText);
     } catch (err) {
-      setExcelMsg(err instanceof Error ? err.message : 'Gagal membaca file Excel PG.');
+      setExcelStatus({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Gagal membaca file Excel PG.',
+      });
+    } finally {
+      input.value = '';
     }
   };
 
   const handleEssayExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     try {
       const res = await parseEssayExcelQuestions(file);
-      onUpdateEssayQuestions(res.questions);
-      setExcelMsg(`${res.questions.length} soal Isian Singkat berhasil disinkronkan ke Pos Ujian Puncak.`);
+      onUpdateEssayQuestions(res.questions, file.name);
+      const toastText = `Berhasil mengimpor ${res.questions.length} Soal Isian dari ${file.name}!`;
+      const warnNote = res.warnings.length > 0 ? ` (${res.warnings[0]})` : '';
+      setExcelStatus({
+        type: 'ok',
+        text: `${toastText} Langsung disinkronkan ke Pos Ujian Puncak.${warnNote}`,
+      });
+      onToastSuccess(toastText);
     } catch (err) {
-      setExcelMsg(err instanceof Error ? err.message : 'Gagal membaca file Excel Isian Singkat.');
+      setExcelStatus({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Gagal membaca file Excel Isian Singkat.',
+      });
+    } finally {
+      input.value = '';
     }
   };
 
@@ -269,8 +301,8 @@ export const GameHud: React.FC<GameHudProps> = ({
             <span className="hidden md:inline font-mono-num text-sky-300">
               {currentCP >= 25
                 ? essayDone
-                  ? `Puncak Selesai 100% (Isian ${essayCorrect}/5)`
-                  : `Menuju Gapura Puncak — Pos Ujian 5 Isian (${hud.distToNextCp} m)`
+                  ? `Puncak Selesai 100% (Isian ${essayCorrect}/${essayQuestionCount || 5})`
+                  : `Menuju Gapura Puncak — Pos Ujian ${essayQuestionCount || 5} Isian (${hud.distToNextCp} m)`
                 : `Menuju CP ${hud.nextCpIndex} (${hud.distToNextCp} m · ↑ ${hud.elevToNextCp} m)`}
             </span>
           </div>
@@ -530,7 +562,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setExcelMsg('');
+                      setExcelStatus(null);
                       setExcelModalOpen(true);
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-emerald-300 cursor-pointer whitespace-nowrap"
@@ -962,9 +994,11 @@ export const GameHud: React.FC<GameHudProps> = ({
 
             {/* Section 1: 25 PG */}
             <div className="p-3.5 rounded-xl bg-slate-950/80 border border-white/10 space-y-2.5">
-              <div className="flex items-center justify-between text-xs font-semibold">
+              <div className="flex items-center justify-between gap-2 flex-wrap text-xs font-semibold">
                 <span className="text-sky-300">1. Bank Soal Pilihan Ganda (CP 1–25)</span>
-                <span className="font-mono-num text-slate-300">{questionCount || 25} soal aktif</span>
+                <span className={`font-mono-num ${pgFileName ? 'text-emerald-300' : 'text-slate-300'}`}>
+                  {pgFileName ? `${questionCount || 25} PG Kustom (${pgFileName})` : '25 PG bawaan'}
+                </span>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -986,26 +1020,35 @@ export const GameHud: React.FC<GameHudProps> = ({
                     hidden
                   />
                 </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onUpdateQuestions(null);
-                    if (excelInputRef.current) excelInputRef.current.value = '';
-                    setExcelMsg('Bank soal PG dikembalikan ke 25 soal bawaan.');
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-950/60 text-xs font-semibold cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Reset PG</span>
-                </button>
+                {pgFileName && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateQuestions(null, '');
+                      if (excelInputRef.current) excelInputRef.current.value = '';
+                      setExcelStatus({
+                        type: 'ok',
+                        text: 'Bank soal PG dikembalikan ke 25 soal bawaan.',
+                      });
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-950/60 text-xs font-semibold cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset ke Bawaan</span>
+                  </button>
+                )}
               </div>
             </div>
 
             {/* Section 2: 5 Essay Summit */}
             <div className="p-3.5 rounded-xl bg-slate-950/80 border border-amber-500/25 space-y-2.5">
-              <div className="flex items-center justify-between text-xs font-semibold">
+              <div className="flex items-center justify-between gap-2 flex-wrap text-xs font-semibold">
                 <span className="text-amber-300">2. Bank Soal Isian Singkat Puncak (5 Soal)</span>
-                <span className="font-mono-num text-slate-300">{essayQuestionCount || 5} soal aktif</span>
+                <span className={`font-mono-num ${essayFileName ? 'text-emerald-300' : 'text-slate-300'}`}>
+                  {essayFileName
+                    ? `${essayQuestionCount || 5} Isian Kustom (${essayFileName})`
+                    : '5 isian bawaan'}
+                </span>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -1027,24 +1070,40 @@ export const GameHud: React.FC<GameHudProps> = ({
                     hidden
                   />
                 </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onUpdateEssayQuestions(null);
-                    if (essayExcelInputRef.current) essayExcelInputRef.current.value = '';
-                    setExcelMsg('Bank soal Isian Singkat dikembalikan ke 5 soal bawaan.');
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-950/60 text-xs font-semibold cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Reset Isian</span>
-                </button>
+                {essayFileName && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateEssayQuestions(null, '');
+                      if (essayExcelInputRef.current) essayExcelInputRef.current.value = '';
+                      setExcelStatus({
+                        type: 'ok',
+                        text: 'Bank soal Isian Singkat dikembalikan ke 5 soal bawaan.',
+                      });
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-950/60 text-xs font-semibold cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset ke Bawaan</span>
+                  </button>
+                )}
               </div>
             </div>
 
-            {excelMsg && (
-              <div className="p-3 rounded-lg bg-emerald-950/70 border border-emerald-500/40 text-xs text-emerald-200">
-                {excelMsg}
+            {excelStatus && (
+              <div
+                className={`flex items-start gap-2 p-3 rounded-lg border text-xs ${
+                  excelStatus.type === 'err'
+                    ? 'bg-red-950/85 border-red-500/50 text-red-200'
+                    : 'bg-emerald-950/80 border-emerald-500/50 text-emerald-200'
+                }`}
+              >
+                {excelStatus.type === 'err' ? (
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                )}
+                <span>{excelStatus.text}</span>
               </div>
             )}
           </div>

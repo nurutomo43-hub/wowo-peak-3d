@@ -1,5 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
+  AlertCircle,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Download,
@@ -46,15 +48,18 @@ interface LobbyModalProps {
   initExplanationDuration: number;
   onChangeInitExplanationDuration: (val: number) => void;
   customQuestions: QuizQuestion[] | null;
-  onChangeCustomQuestions: (q: QuizQuestion[] | null) => void;
+  pgFileName: string;
+  onChangeCustomQuestions: (q: QuizQuestion[] | null, fileName?: string) => void;
   customEssayQuestions: EssayQuestion[] | null;
-  onChangeCustomEssayQuestions: (q: EssayQuestion[] | null) => void;
+  essayFileName: string;
+  onChangeCustomEssayQuestions: (q: EssayQuestion[] | null, fileName?: string) => void;
   pgWeight: number;
   essayWeight: number;
   onChangeWeights: (pgWeight: number, essayWeight: number) => void;
   reconnectInfo: StudentRestoreProgress | null;
   errorMsg: string;
   onError: (msg: string) => void;
+  onToastSuccess: (msg: string) => void;
   onJoinStudent: () => void;
   onCreateRoom: () => void;
 }
@@ -78,8 +83,10 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   initExplanationDuration,
   onChangeInitExplanationDuration,
   customQuestions,
+  pgFileName,
   onChangeCustomQuestions,
   customEssayQuestions,
+  essayFileName,
   onChangeCustomEssayQuestions,
   pgWeight,
   essayWeight,
@@ -87,44 +94,69 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   reconnectInfo,
   errorMsg,
   onError,
+  onToastSuccess,
   onJoinStudent,
   onCreateRoom,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const essayFileInputRef = useRef<HTMLInputElement | null>(null);
   const [editorExpanded, setEditorExpanded] = useState(true);
+  const [pgImportAlert, setPgImportAlert] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [essayImportAlert, setEssayImportAlert] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     try {
       const res = await parseExcelQuestions(file);
-      onChangeCustomQuestions(res.questions);
+      onChangeCustomQuestions(res.questions, file.name);
       onError('');
+      const toastText = `Berhasil mengimpor ${res.questions.length} Soal PG dari ${file.name}!`;
+      const warnNote = res.warnings.length > 0 ? ` (${res.warnings[0]})` : '';
+      setPgImportAlert({ type: 'ok', text: `${toastText}${warnNote}` });
+      onToastSuccess(toastText);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Gagal membaca file Excel Soal PG.');
+      const msg = err instanceof Error ? err.message : 'Gagal membaca file Excel Soal PG.';
+      setPgImportAlert({ type: 'err', text: msg });
+      onError(msg);
+    } finally {
+      input.value = '';
     }
   };
 
   const handleEssayFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     try {
       const res = await parseEssayExcelQuestions(file);
-      onChangeCustomEssayQuestions(res.questions);
+      onChangeCustomEssayQuestions(res.questions, file.name);
       onError('');
+      const toastText = `Berhasil mengimpor ${res.questions.length} Soal Isian dari ${file.name}!`;
+      const warnNote = res.warnings.length > 0 ? ` (${res.warnings[0]})` : '';
+      setEssayImportAlert({ type: 'ok', text: `${toastText}${warnNote}` });
+      onToastSuccess(toastText);
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Gagal membaca file Excel Soal Isian Singkat.');
+      const msg = err instanceof Error ? err.message : 'Gagal membaca file Excel Soal Isian Singkat.';
+      setEssayImportAlert({ type: 'err', text: msg });
+      onError(msg);
+    } finally {
+      input.value = '';
     }
   };
 
   const handleResetQuestions = () => {
-    onChangeCustomQuestions(null);
+    onChangeCustomQuestions(null, '');
+    setPgImportAlert(null);
+    onError('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleResetEssayQuestions = () => {
-    onChangeCustomEssayQuestions(null);
+    onChangeCustomEssayQuestions(null, '');
+    setEssayImportAlert(null);
+    onError('');
     if (essayFileInputRef.current) essayFileInputRef.current.value = '';
   };
 
@@ -354,8 +386,14 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                       <FileSpreadsheet className="w-4 h-4 text-sky-400 shrink-0" />
                       <span>Bank Soal PG (25 Soal CP 1–25)</span>
                     </div>
-                    <span className="text-[11px] font-mono-num text-sky-300">
-                      {customQuestions ? `${customQuestions.length} PG kustom` : '25 PG bawaan'}
+                    <span
+                      className={`text-[11px] font-mono-num ${
+                        customQuestions ? 'text-emerald-300 font-semibold' : 'text-sky-300'
+                      }`}
+                    >
+                      {customQuestions
+                        ? `${customQuestions.length} PG Kustom (${pgFileName || 'Excel'})`
+                        : '25 PG bawaan'}
                     </span>
                   </div>
 
@@ -388,10 +426,27 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-500/50 text-red-300 hover:bg-red-950/60 text-xs font-semibold cursor-pointer whitespace-nowrap"
                       >
                         <RotateCcw className="w-3 h-3" />
-                        <span>Reset</span>
+                        <span>Reset ke Bawaan</span>
                       </button>
                     )}
                   </div>
+
+                  {pgImportAlert && (
+                    <div
+                      className={`flex items-start gap-2 px-2.5 py-2 rounded-lg border text-[11px] ${
+                        pgImportAlert.type === 'err'
+                          ? 'bg-red-950/85 border-red-500/50 text-red-200'
+                          : 'bg-emerald-950/80 border-emerald-500/45 text-emerald-200'
+                      }`}
+                    >
+                      {pgImportAlert.type === 'err' ? (
+                        <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                      )}
+                      <span>{pgImportAlert.text}</span>
+                    </div>
+                  )}
 
                   {customQuestions && customQuestions.length > 0 && (
                     <div className="max-h-24 overflow-y-auto rounded-lg bg-slate-900 border border-white/10 p-2 space-y-1 text-[11px] text-slate-300">
@@ -413,8 +468,14 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                       <FileSpreadsheet className="w-4 h-4 text-amber-400 shrink-0" />
                       <span>Isian Singkat Puncak (5 Soal)</span>
                     </div>
-                    <span className="text-[11px] font-mono-num text-amber-300">
-                      {customEssayQuestions ? `${customEssayQuestions.length} isian kustom` : '5 isian bawaan'}
+                    <span
+                      className={`text-[11px] font-mono-num ${
+                        customEssayQuestions ? 'text-emerald-300 font-semibold' : 'text-amber-300'
+                      }`}
+                    >
+                      {customEssayQuestions
+                        ? `${customEssayQuestions.length} Isian Kustom (${essayFileName || 'Excel'})`
+                        : '5 isian bawaan'}
                     </span>
                   </div>
 
@@ -447,10 +508,27 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-500/50 text-red-300 hover:bg-red-950/60 text-xs font-semibold cursor-pointer whitespace-nowrap"
                       >
                         <RotateCcw className="w-3 h-3" />
-                        <span>Reset</span>
+                        <span>Reset ke Bawaan</span>
                       </button>
                     )}
                   </div>
+
+                  {essayImportAlert && (
+                    <div
+                      className={`flex items-start gap-2 px-2.5 py-2 rounded-lg border text-[11px] ${
+                        essayImportAlert.type === 'err'
+                          ? 'bg-red-950/85 border-red-500/50 text-red-200'
+                          : 'bg-emerald-950/80 border-emerald-500/45 text-emerald-200'
+                      }`}
+                    >
+                      {essayImportAlert.type === 'err' ? (
+                        <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                      )}
+                      <span>{essayImportAlert.text}</span>
+                    </div>
+                  )}
 
                   {customEssayQuestions && customEssayQuestions.length > 0 && (
                     <div className="max-h-24 overflow-y-auto rounded-lg bg-slate-900 border border-white/10 p-2 space-y-1 text-[11px] text-slate-300">
@@ -510,8 +588,9 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
           )}
 
           {errorMsg && (
-            <div className="px-4 py-2.5 rounded-lg bg-red-950/80 border border-red-500/50 text-sm text-red-200 text-center">
-              {errorMsg}
+            <div className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-950/85 border border-red-500/55 text-sm text-red-200 text-center">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{errorMsg}</span>
             </div>
           )}
         </div>

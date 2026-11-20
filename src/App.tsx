@@ -1,12 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { Pause } from 'lucide-react';
+import { CheckCircle2, Pause } from 'lucide-react';
 import { MountainWorld, CP_POINTS, SUMMIT_EXAM_POINT } from './game/MountainWorld';
 import { SoundEngine } from './game/SoundEngine';
 import {
   DEFAULT_ESSAY_QUESTIONS,
   buildStudentQuizDeck,
+  clearCustomEssayFromStorage,
+  clearCustomPgFromStorage,
   evaluateEssayAnswer,
+  loadCustomEssayFromStorage,
+  loadCustomPgFromStorage,
+  saveCustomEssayToStorage,
+  saveCustomPgToStorage,
 } from './game/questions';
 import { normalizeAvatarConfig, type R15JointRig } from './game/AvatarBuilder';
 import { LobbyModal } from './components/LobbyModal';
@@ -90,10 +96,21 @@ export function App() {
   const [initQuizDuration, setInitQuizDuration] = useState(30);
   const [initSessionDuration, setInitSessionDuration] = useState(20);
   const [initExplanationDuration, setInitExplanationDuration] = useState(45);
-  const [customQuestions, setCustomQuestions] = useState<QuizQuestion[] | null>(null);
-  const [customEssayQuestions, setCustomEssayQuestions] = useState<EssayQuestion[] | null>(null);
+  const [customQuestions, setCustomQuestions] = useState<QuizQuestion[] | null>(
+    () => loadCustomPgFromStorage()?.questions ?? null,
+  );
+  const [pgFileName, setPgFileName] = useState<string>(
+    () => loadCustomPgFromStorage()?.fileName ?? '',
+  );
+  const [customEssayQuestions, setCustomEssayQuestions] = useState<EssayQuestion[] | null>(
+    () => loadCustomEssayFromStorage()?.questions ?? null,
+  );
+  const [essayFileName, setEssayFileName] = useState<string>(
+    () => loadCustomEssayFromStorage()?.fileName ?? '',
+  );
   const [reconnectInfo, setReconnectInfo] = useState<StudentRestoreProgress | null>(null);
   const [lobbyError, setLobbyError] = useState('');
+  const [toastMsg, setToastMsg] = useState('');
 
   // In-game UI state
   const [inGame, setInGame] = useState(false);
@@ -115,8 +132,12 @@ export function App() {
     sessionDurationMinutes: 20,
     explanationDurationSec: 45,
   });
-  const [questionCount, setQuestionCount] = useState(25);
-  const [essayQuestionCount, setEssayQuestionCount] = useState(5);
+  const [questionCount, setQuestionCount] = useState(
+    () => loadCustomPgFromStorage()?.questions.length ?? 25,
+  );
+  const [essayQuestionCount, setEssayQuestionCount] = useState(
+    () => loadCustomEssayFromStorage()?.questions.length ?? 5,
+  );
   const [currentCP, setCurrentCP] = useState(0);
   const [essayDone, setEssayDone] = useState(false);
   const [essayCorrect, setEssayCorrect] = useState(0);
@@ -178,7 +199,8 @@ export function App() {
     essayExplainLeft: 0,
     essayIsLastPending: false,
     essayAnswers: [] as EssayAnswerRecord[],
-    essayQuestions: DEFAULT_ESSAY_QUESTIONS as EssayQuestion[],
+    essayQuestions: (loadCustomEssayFromStorage()?.questions ??
+      DEFAULT_ESSAY_QUESTIONS) as EssayQuestion[],
     fallCount: 0,
     answers: [] as AnswerRecord[],
     quizDuration: 30,
@@ -219,6 +241,15 @@ export function App() {
 
   const warnTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToastSuccess = useCallback((text: string) => {
+    setToastMsg(text);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMsg('');
+    }, 4500);
+  }, []);
 
   const showWarning = useCallback((text: string, sec = 3.0) => {
     setWarningText(text);
@@ -504,7 +535,7 @@ export function App() {
       return;
     }
     const questions =
-      g.essayQuestions && g.essayQuestions.length >= 5
+      g.essayQuestions && g.essayQuestions.length > 0
         ? g.essayQuestions
         : DEFAULT_ESSAY_QUESTIONS;
     const startIdx = Math.min(questions.length - 1, g.essayAnswers.length);
@@ -740,7 +771,7 @@ export function App() {
       g.roomCode = roomState.roomCode;
       g.paused = Boolean(roomState.paused);
       g.essayQuestions =
-        essayQuestionsFromServer && essayQuestionsFromServer.length >= 5
+        essayQuestionsFromServer && essayQuestionsFromServer.length > 0
           ? essayQuestionsFromServer
           : DEFAULT_ESSAY_QUESTIONS;
 
@@ -949,7 +980,7 @@ export function App() {
 
           case 'essay_questions_updated': {
             const list =
-              Array.isArray(msg.essayQuestions) && msg.essayQuestions.length >= 5
+              Array.isArray(msg.essayQuestions) && msg.essayQuestions.length > 0
                 ? (msg.essayQuestions as EssayQuestion[])
                 : DEFAULT_ESSAY_QUESTIONS;
             g.essayQuestions = list;
@@ -1600,6 +1631,7 @@ export function App() {
       window.clearTimeout(frameId);
       if (warnTimerRef.current) window.clearTimeout(warnTimerRef.current);
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       mountEl.removeEventListener('pointerdown', onPointerDown);
@@ -1761,18 +1793,54 @@ export function App() {
     }
   };
 
-  const handleUpdateQuestions = (questions: QuizQuestion[] | null) => {
-    if (gameRef.current.role !== 'teacher' || !wsRef.current) return;
+  const handleLobbyCustomQuestionsChange = (
+    questions: QuizQuestion[] | null,
+    fileName = '',
+  ) => {
     setCustomQuestions(questions);
-    setQuestionCount(questions?.length || 25);
+    if (questions && questions.length > 0) {
+      const cleanFile = fileName || 'Soal_PG_Kustom.xlsx';
+      setPgFileName(cleanFile);
+      setQuestionCount(questions.length);
+      saveCustomPgToStorage(questions, cleanFile);
+    } else {
+      setPgFileName('');
+      setQuestionCount(25);
+      clearCustomPgFromStorage();
+    }
+  };
+
+  const handleLobbyCustomEssayChange = (
+    essayQuestions: EssayQuestion[] | null,
+    fileName = '',
+  ) => {
+    setCustomEssayQuestions(essayQuestions);
+    if (essayQuestions && essayQuestions.length > 0) {
+      const cleanFile = fileName || 'Soal_Isian_Kustom.xlsx';
+      setEssayFileName(cleanFile);
+      setEssayQuestionCount(essayQuestions.length);
+      gameRef.current.essayQuestions = essayQuestions;
+      saveCustomEssayToStorage(essayQuestions, cleanFile);
+    } else {
+      setEssayFileName('');
+      setEssayQuestionCount(5);
+      gameRef.current.essayQuestions = DEFAULT_ESSAY_QUESTIONS;
+      clearCustomEssayFromStorage();
+    }
+  };
+
+  const handleUpdateQuestions = (questions: QuizQuestion[] | null, fileName = '') => {
+    handleLobbyCustomQuestionsChange(questions, fileName);
+    if (gameRef.current.role !== 'teacher' || !wsRef.current) return;
     wsRef.current.send(JSON.stringify({ type: 'set_questions', questions }));
   };
 
-  const handleUpdateEssayQuestions = (essayQuestions: EssayQuestion[] | null) => {
+  const handleUpdateEssayQuestions = (
+    essayQuestions: EssayQuestion[] | null,
+    fileName = '',
+  ) => {
+    handleLobbyCustomEssayChange(essayQuestions, fileName);
     if (gameRef.current.role !== 'teacher' || !wsRef.current) return;
-    setCustomEssayQuestions(essayQuestions);
-    setEssayQuestionCount(essayQuestions?.length || 5);
-    gameRef.current.essayQuestions = essayQuestions || DEFAULT_ESSAY_QUESTIONS;
     wsRef.current.send(JSON.stringify({ type: 'set_essay_questions', essayQuestions }));
   };
 
@@ -1841,6 +1909,17 @@ export function App() {
         style={{ opacity: lightningOpacity }}
       />
 
+      {/* Global Green Import Toast */}
+      {toastMsg && (
+        <div
+          role="status"
+          className="fixed top-4 right-4 z-[70] flex items-center gap-2.5 px-4 py-3 rounded-xl bg-emerald-950/95 border border-emerald-400 text-emerald-100 text-sm font-semibold shadow-2xl max-w-md"
+        >
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
       {/* Lobby Screen */}
       {!inGame && !kickedMessage && (
         <LobbyModal
@@ -1862,9 +1941,11 @@ export function App() {
           initExplanationDuration={initExplanationDuration}
           onChangeInitExplanationDuration={setInitExplanationDuration}
           customQuestions={customQuestions}
-          onChangeCustomQuestions={setCustomQuestions}
+          pgFileName={pgFileName}
+          onChangeCustomQuestions={handleLobbyCustomQuestionsChange}
           customEssayQuestions={customEssayQuestions}
-          onChangeCustomEssayQuestions={setCustomEssayQuestions}
+          essayFileName={essayFileName}
+          onChangeCustomEssayQuestions={handleLobbyCustomEssayChange}
           pgWeight={settings.pgWeight}
           essayWeight={settings.essayWeight}
           onChangeWeights={(pgWeight, essayWeight) =>
@@ -1873,6 +1954,7 @@ export function App() {
           reconnectInfo={reconnectInfo}
           errorMsg={lobbyError}
           onError={setLobbyError}
+          onToastSuccess={showToastSuccess}
           onJoinStudent={handleJoinStudent}
           onCreateRoom={handleCreateRoom}
         />
@@ -1898,6 +1980,8 @@ export function App() {
           participants={participants}
           questionCount={questionCount}
           essayQuestionCount={essayQuestionCount}
+          pgFileName={pgFileName}
+          essayFileName={essayFileName}
           warningText={warningText}
           isTouchDevice={isTouchDevice}
           onResetCamera={resetCameraBehindPlayer}
@@ -1907,6 +1991,7 @@ export function App() {
           onUpdateAvatar={handleUpdateInGameAvatar}
           onUpdateQuestions={handleUpdateQuestions}
           onUpdateEssayQuestions={handleUpdateEssayQuestions}
+          onToastSuccess={showToastSuccess}
           onTriggerEmote={handleTriggerEmote}
           onTeleport={handleTeleport}
           onTriggerEvent={handleTriggerEvent}

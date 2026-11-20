@@ -285,10 +285,13 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                     id="join-room-code"
                     type="text"
                     maxLength={5}
-                    inputMode="numeric"
                     value={roomCodeInput}
                     readOnly={lockedStudentMode && roomCodeInput.length === 5}
-                    onChange={(e) => onChangeRoomCodeInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                    onChange={(e) =>
+                      onChangeRoomCodeInput(
+                        e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5),
+                      )
+                    }
                     placeholder="Contoh: 48291"
                     className={`w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-white/15 text-sm font-mono-num tracking-widest text-white placeholder-slate-500 focus:outline-none focus:border-sky-400 select-text ${
                       lockedStudentMode && roomCodeInput.length === 5
@@ -306,7 +309,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                 className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-wait text-white font-semibold text-base transition-colors cursor-pointer"
               >
                 <Mountain className="w-5 h-5" />
-                <span>{isConnecting ? 'Mengambil Data Ruangan...' : 'Mulai Pendakian'}</span>
+                <span>{isConnecting ? 'Menghubungkan ke Ruangan Guru...' : 'Mulai Pendakian'}</span>
               </button>
             </div>
           ) : (
@@ -586,11 +589,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                 className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-wait text-white font-semibold text-base transition-colors cursor-pointer"
               >
                 <Mountain className="w-5 h-5" />
-                <span>
-                  {isConnecting
-                    ? 'Menyimpan Ruangan ke Supabase...'
-                    : 'Buat Ruangan Kelas (Mode Pemantau Kebal)'}
-                </span>
+                <span>Buat Ruangan Kelas (Mode Pemantau Kebal)</span>
               </button>
             </div>
           )}

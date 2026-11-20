@@ -2547,6 +2547,83 @@ export class MountainWorld {
     }
   }
 
+  public spawnWildlifeAhead(
+    playerX: number,
+    playerZ: number,
+    speciesOverride?: 'tiger' | 'bear' | 'boar' | 'snake',
+  ): 'tiger' | 'bear' | 'boar' | 'snake' {
+    const speciesList: Array<'tiger' | 'bear' | 'boar' | 'snake'> = [
+      'tiger',
+      'bear',
+      'boar',
+      'snake',
+    ];
+    const species =
+      speciesOverride || speciesList[Math.floor(Math.random() * speciesList.length)];
+
+    // Keep total wildlife bounded cleanly while allowing Teacher triggers
+    if (this.wildlife.length >= 58) {
+      const oldManualIdx = this.wildlife.findIndex((w) => w.id.startsWith('manual_'));
+      const dropIdx = oldManualIdx >= 0 ? oldManualIdx : 0;
+      const [removed] = this.wildlife.splice(dropIdx, 1);
+      if (removed) this.scene.remove(removed.mesh);
+    }
+
+    const ahead = this.getTrailPointAhead(playerX, playerZ, species === 'snake' ? 13 : 17);
+    const nx = -ahead.tz;
+    const nz = ahead.tx;
+    const ox = ahead.x + (species === 'snake' ? (Math.random() < 0.5 ? 1.8 : -1.8) : nx * 1.4);
+    const oz = ahead.z + (species === 'snake' ? (Math.random() < 0.5 ? 1.8 : -1.8) : nz * 1.4);
+
+    let mesh: THREE.Group;
+    let legs: THREE.Object3D[] = [];
+    let tail: THREE.Object3D | null = null;
+    let head: THREE.Object3D | null = null;
+
+    if (species === 'tiger') {
+      const res = this.createTigerMesh();
+      mesh = res.group;
+      legs = res.legs;
+      tail = res.tail;
+      head = res.head;
+    } else if (species === 'bear') {
+      const res = this.createSunBearMesh();
+      mesh = res.group;
+      legs = res.legs;
+      head = res.head;
+    } else if (species === 'boar') {
+      const res = this.createBoarMesh();
+      mesh = res.group;
+      legs = res.legs;
+    } else {
+      const res = this.createPythonMesh();
+      mesh = res.group;
+      head = res.head;
+    }
+
+    mesh.position.set(ox, this.getGroundHeight(ox, oz), oz);
+    this.scene.add(mesh);
+
+    this.wildlife.push({
+      id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      species,
+      mesh,
+      originX: ox,
+      originZ: oz,
+      dirX: species === 'boar' ? nx : ahead.tx,
+      dirZ: species === 'boar' ? nz : ahead.tz,
+      patrolSign: 1,
+      patrolRadius: species === 'snake' ? 0.5 : 8.0,
+      phase: Math.random() * Math.PI * 2,
+      soundCooldown: 1.5,
+      legs,
+      tail,
+      head,
+    });
+
+    return species;
+  }
+
   // --- LOCAL GHOST 1: KUNTILANAK (HIGH VISIBILITY ON TRAIL) ---
   public spawnKuntilanak(x: number, z: number) {
     if (this.kuntilanaks.length >= 6) return;
@@ -3213,32 +3290,32 @@ export class MountainWorld {
     soundEngine: SoundEngine,
     isPaused: boolean,
   ): { hitBy: HazardHitType | null; shakeIntensity: number } {
-    const envAlpha = 1 - Math.exp(-1.5 * dt);
+    const envAlpha = 1 - Math.exp(-4.2 * dt);
     this.envCurrent.sky.lerp(this.envTarget.sky, envAlpha);
     this.envCurrent.fog.lerp(this.envTarget.fog, envAlpha);
     this.envCurrent.fogDensity = THREE.MathUtils.damp(
       this.envCurrent.fogDensity,
       this.envTarget.fogDensity,
-      1.5,
+      4.2,
       dt,
     );
     this.envCurrent.sunColor.lerp(this.envTarget.sunColor, envAlpha);
     this.envCurrent.sunIntensity = THREE.MathUtils.damp(
       this.envCurrent.sunIntensity,
       this.envTarget.sunIntensity,
-      1.5,
+      4.2,
       dt,
     );
     this.envCurrent.ambientIntensity = THREE.MathUtils.damp(
       this.envCurrent.ambientIntensity,
       this.envTarget.ambientIntensity,
-      1.5,
+      4.2,
       dt,
     );
     this.envCurrent.hemiIntensity = THREE.MathUtils.damp(
       this.envCurrent.hemiIntensity,
       this.envTarget.hemiIntensity,
-      1.5,
+      4.2,
       dt,
     );
     this.envCurrent.sunOffset.lerp(this.envTarget.sunOffset, envAlpha);

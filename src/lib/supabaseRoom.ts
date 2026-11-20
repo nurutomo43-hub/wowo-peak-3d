@@ -14,6 +14,7 @@ import type {
   RemotePlayerPayload,
   Role,
   RoomSettings,
+  RoomStatus,
 } from '../types/game';
 
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || '';
@@ -41,7 +42,7 @@ export function getSupabaseClient(): SupabaseClient {
     cachedClient = createClient(supabaseUrl, supabaseAnonKey, {
       realtime: {
         params: {
-          eventsPerSecond: 20,
+          eventsPerSecond: 30,
         },
       },
     });
@@ -53,7 +54,16 @@ export function generateRoomCode(): string {
   return String(Math.floor(10000 + Math.random() * 90000));
 }
 
+export interface RoomPresencePayload {
+  id: string;
+  role: Role;
+  name: string;
+  avatar: AvatarConfig;
+  joinedAt: number;
+}
+
 export interface SupabaseRoomConfig {
+  status?: RoomStatus;
   teacherId: string;
   teacherName: string;
   teacherAvatar: AvatarConfig;
@@ -91,6 +101,7 @@ export interface HostStudentRecord {
 
 export interface HostRoomState {
   code: string;
+  status: RoomStatus;
   teacherId: string;
   teacherName: string;
   teacherAvatar: AvatarConfig;
@@ -158,8 +169,16 @@ export type RoomBroadcastMessage =
       emote: EmoteType;
     }
   | {
+      type: 'game_start';
+      remainingSec: number;
+      sessionEndsAt: number;
+      settings: RoomSettings;
+      participants: ParticipantSummary[];
+    }
+  | {
       type: 'participants_update';
       participants: ParticipantSummary[];
+      status?: RoomStatus;
     }
   | {
       type: 'settings_updated';
@@ -177,12 +196,14 @@ export type RoomBroadcastMessage =
       type: 'pause_updated';
       paused: boolean;
       remainingSec: number;
+      status?: RoomStatus;
     }
   | {
       type: 'timer_sync';
       remainingSec: number;
       sessionDurationMinutes: number;
       paused: boolean;
+      status?: RoomStatus;
     }
   | {
       type: 'teacher_event';
@@ -230,6 +251,7 @@ export async function fetchSupabaseRoomConfig(code: string): Promise<SupabaseRoo
 
 export function buildSupabaseRoomConfig(room: HostRoomState): SupabaseRoomConfig {
   return {
+    status: room.status,
     teacherId: room.teacherId,
     teacherName: room.teacherName,
     teacherAvatar: room.teacherAvatar,
@@ -321,6 +343,7 @@ export function getHostExportRows(students: Map<string, HostStudentRecord>): Exp
 export function getHostPublicRoomState(room: HostRoomState): PublicRoomState {
   return {
     roomCode: room.code,
+    status: room.status,
     settings: room.settings,
     paused: room.paused,
     sessionEnded: room.sessionEnded,

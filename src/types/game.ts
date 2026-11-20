@@ -121,6 +121,7 @@ export type HairStyle =
 
 export type EmoteType = 'wave' | 'celebrate' | 'cheer' | 'scared' | 'laugh' | 'sit';
 export type RespawnMode = 'last_cp' | 'prev_cp' | 'base_camp';
+export type RoomStatus = 'waiting' | 'started' | 'ended';
 export type DisasterEventType =
   | 'landslide'
   | 'kuntilanak'
@@ -128,7 +129,8 @@ export type DisasterEventType =
   | 'thunder'
   | 'earthquake'
   | 'wildfire'
-  | 'meteor';
+  | 'meteor'
+  | 'wildlife';
 
 export interface AvatarConfig {
   gender: GenderType;
@@ -278,6 +280,7 @@ export interface ExportStudentRow {
 
 export interface PublicRoomState {
   roomCode: string;
+  status: RoomStatus;
   settings: RoomSettings;
   paused: boolean;
   sessionEnded: boolean;

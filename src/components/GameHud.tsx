@@ -9,9 +9,13 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  CloudFog,
   CloudLightning,
+  CloudRain,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   FileSpreadsheet,
   Flame,
   Ghost,
@@ -19,6 +23,7 @@ import {
   MapPin,
   Mountain,
   Pause,
+  PawPrint,
   Play,
   RotateCcw,
   Smile,
@@ -45,6 +50,7 @@ import {
   type RespawnMode,
   type Role,
   type RoomSettings,
+  type RoomStatus,
   type TimeOfDay,
   type WeatherType,
 } from '../types/game';
@@ -59,6 +65,8 @@ import { AvatarEditor } from './AvatarEditor';
 
 interface GameHudProps {
   roomCode: string;
+  roomStatus?: RoomStatus;
+  showClassLobby?: boolean;
   role: Role;
   avatar: AvatarConfig;
   currentCP: number;
@@ -91,6 +99,8 @@ interface GameHudProps {
   onTeleport: (cpIndex: number) => void;
   onTriggerEvent: (eventType: DisasterEventType) => void;
   onTogglePause: () => void;
+  onToggleClassLobby?: () => void;
+  onStartExpedition?: () => void;
   onKickStudent: (studentId: string, name: string) => void;
   onEndSession: () => void;
   onJoystickChange: (x: number, y: number) => void;
@@ -124,6 +134,8 @@ const RESPAWN_LABELS: Record<RespawnMode, string> = {
 
 export const GameHud: React.FC<GameHudProps> = ({
   roomCode,
+  roomStatus = 'started',
+  showClassLobby = false,
   role,
   avatar,
   currentCP,
@@ -156,6 +168,8 @@ export const GameHud: React.FC<GameHudProps> = ({
   onTeleport,
   onTriggerEvent,
   onTogglePause,
+  onToggleClassLobby,
+  onStartExpedition,
   onKickStudent,
   onEndSession,
   onJoystickChange,
@@ -334,6 +348,11 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {roomStatus === 'waiting' && (
+            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-400/50 text-[11px] font-bold text-amber-300">
+              LOBI TUNGGU
+            </span>
+          )}
           <div
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-mono-num tabular-nums text-xs sm:text-sm font-bold whitespace-nowrap ${
               timerUrgent
@@ -516,8 +535,40 @@ export const GameHud: React.FC<GameHudProps> = ({
 
             {role === 'teacher' ? (
               <>
-                {/* ROW 1: Room, Link Siswa, Mode Respawn, Timer Soal, Excel Bank, Pause/Start & End Session */}
+                {/* ROW 1: Room, Lobby Toggle, Start, Link Siswa, Mode Respawn, Timer Soal, Excel Bank, Pause & End Session */}
                 <div className="flex flex-wrap items-center justify-center gap-1.5">
+                  {onToggleClassLobby && (
+                    <button
+                      type="button"
+                      onClick={onToggleClassLobby}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                        showClassLobby
+                          ? 'bg-amber-600 border-amber-400 text-white'
+                          : 'bg-slate-800 hover:bg-slate-700 border-amber-400/35 text-amber-200'
+                      }`}
+                    >
+                      {showClassLobby ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {showClassLobby ? 'Sembunyikan Lobi' : `Tampilkan Lobi (${participants.length})`}
+                      </span>
+                    </button>
+                  )}
+
+                  {roomStatus === 'waiting' && onStartExpedition && (
+                    <button
+                      type="button"
+                      onClick={onStartExpedition}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white cursor-pointer whitespace-nowrap shadow"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>Mulai Ekspedisi Sekarang</span>
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={handleCopyStudentLink}
@@ -777,6 +828,54 @@ export const GameHud: React.FC<GameHudProps> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => onTriggerEvent('thunder')}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
+                  >
+                    <CloudLightning className="w-3.5 h-3.5" />
+                    <span>Badai Petir</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateSettings({
+                        weather: settings.weather === 'hujan' ? 'cerah' : 'hujan',
+                      })
+                    }
+                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                      settings.weather === 'hujan'
+                        ? 'bg-sky-700 border-sky-400 text-white'
+                        : 'bg-sky-950/80 hover:bg-sky-900 border-sky-500/40 text-sky-100'
+                    }`}
+                  >
+                    <CloudRain className="w-3.5 h-3.5" />
+                    <span>Hujan Lebat</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateSettings({
+                        weather: settings.weather === 'berkabut' ? 'cerah' : 'berkabut',
+                      })
+                    }
+                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                      settings.weather === 'berkabut'
+                        ? 'bg-slate-600 border-slate-300 text-white'
+                        : 'bg-slate-800 hover:bg-slate-700 border-slate-500/40 text-slate-100'
+                    }`}
+                  >
+                    <CloudFog className="w-3.5 h-3.5" />
+                    <span>Kabut Tebal</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onTriggerEvent('wildlife')}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-900/85 hover:bg-amber-800 border border-amber-500/40 text-xs font-semibold text-amber-100 cursor-pointer whitespace-nowrap"
+                  >
+                    <PawPrint className="w-3.5 h-3.5" />
+                    <span>Satwa Liar</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => onTriggerEvent('kuntilanak')}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
                   >
@@ -789,14 +888,6 @@ export const GameHud: React.FC<GameHudProps> = ({
                     className="px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
                   >
                     Pocong
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('thunder')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
-                  >
-                    <CloudLightning className="w-3.5 h-3.5" />
-                    <span>Petir</span>
                   </button>
                   <button
                     type="button"

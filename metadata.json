@@ -1,0 +1,6 @@
+{
+  "name": "WOWO PEAK: 3D EXPEDITION",
+  "description": "Game edukasi pendakian gunung multiplayer 3D interaktif berbasis Three.js, Web Audio API, SheetJS, dan WebSocket real-time untuk pembelajaran di kelas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

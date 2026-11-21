@@ -723,6 +723,47 @@ export class SoundEngine {
     src.start(now);
   }
 
+  public playIceHail() {
+    if (!this.ctx || this.muted) return;
+    const now = this.ctx.currentTime;
+    const buf = this.createNoiseBuffer(1.8);
+    if (buf) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1150, now);
+      filter.frequency.exponentialRampToValueAtTime(520, now + 1.6);
+      filter.Q.value = 2.1;
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.linearRampToValueAtTime(0.24, now + 0.2);
+      gain.gain.exponentialRampToValueAtTime(0.004, now + 1.7);
+
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+      src.start(now);
+    }
+
+    // Crisp icy crystal tinkles
+    [0.05, 0.24, 0.45, 0.7].forEach((off, idx) => {
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(2400 + idx * 320, now + off);
+      g.gain.setValueAtTime(0.055, now + off);
+      g.gain.exponentialRampToValueAtTime(0.001, now + off + 0.14);
+      osc.connect(g);
+      g.connect(this.ctx.destination);
+      osc.start(now + off);
+      osc.stop(now + off + 0.15);
+    });
+  }
+
   public playGeyserBlast() {
     if (!this.ctx || this.muted) return;
     const buf = this.createNoiseBuffer(0.75);

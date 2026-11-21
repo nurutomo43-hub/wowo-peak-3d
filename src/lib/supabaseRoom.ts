@@ -56,10 +56,33 @@ export function generateRoomCode(): string {
 
 export interface RoomPresencePayload {
   id: string;
+  playerId?: string;
   role: Role;
   name: string;
   avatar: AvatarConfig;
   joinedAt: number;
+  cp?: number;
+  pgCorrect?: number;
+  isianCorrect?: number;
+  score?: number;
+  falls?: number;
+  isianDone?: boolean;
+}
+
+export interface PersistedStudentProgress {
+  id: string;
+  playerId?: string;
+  name: string;
+  avatar: AvatarConfig;
+  cp: number;
+  completedCPs: number[];
+  score: number;
+  pgCorrect: number;
+  pgWrong: number;
+  isianCorrect: number;
+  isianWrong: number;
+  isianDone: boolean;
+  falls: number;
 }
 
 export interface SupabaseRoomConfig {
@@ -76,6 +99,8 @@ export interface SupabaseRoomConfig {
   kickedIds: string[];
   questions: QuizQuestion[] | null;
   essayQuestions: EssayQuestion[] | null;
+  studentProgress?: PersistedStudentProgress[];
+  players?: PersistedStudentProgress[];
   createdAt: number;
 }
 
@@ -121,6 +146,10 @@ export interface HostRoomState {
 
 export type RoomBroadcastMessage =
   | {
+      type: 'position_update';
+      payload: RemotePlayerPayload;
+    }
+  | {
       type: 'player_pose';
       payload: RemotePlayerPayload;
     }
@@ -141,6 +170,23 @@ export type RoomBroadcastMessage =
       answers: AnswerRecord[];
       essayAnswers: EssayAnswerRecord[];
       pose: PlayerPose;
+    }
+  | {
+      type: 'player_progress';
+      id: string;
+      playerId?: string;
+      name: string;
+      cp: number;
+      pgCorrect: number;
+      pgWrong?: number;
+      isianCorrect: number;
+      isianWrong?: number;
+      isianDone?: boolean;
+      score: number;
+      falls: number;
+      completedCPs?: number[];
+      newAnswer?: AnswerRecord;
+      newEssayAnswer?: EssayAnswerRecord;
     }
   | {
       type: 'student_progress';
@@ -208,6 +254,8 @@ export type RoomBroadcastMessage =
   | {
       type: 'teacher_event';
       eventType: DisasterEventType;
+      count?: number;
+      offsets?: number[];
     }
   | {
       type: 'kicked';
@@ -221,35 +269,166 @@ export type RoomBroadcastMessage =
       exportRows: ExportStudentRow[];
     };
 
+let hasPlayersColumn: boolean | null = null;
+
+function isMissingPlayersColumnError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  const msg = (err.message || '').toLowerCase();
+  return err.code === '42703' || err.code === 'PGRST204' || msg.includes('players');
+}
+
 export async function upsertSupabaseRoom(code: string, config: SupabaseRoomConfig): Promise<void> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase
-    .from('rooms')
-    .upsert({ code, config }, { onConflict: 'code' });
+  const payload: Record<string, unknown> = { code, config };
+  if (hasPlayersColumn === true) {
+    payload.players = config.players ?? config.studentProgress ?? [];
+  }
+
+  let { error } = await supabase.from('rooms').upsert(payload, { onConflict: 'code' });
+  if (error && hasPlayersColumn === true && isMissingPlayersColumnError(error)) {
+    hasPlayersColumn = false;
+    const retry = await supabase.from('rooms').upsert({ code, config }, { onConflict: 'code' });
+    error = retry.error;
+  }
 
   if (error) {
     throw new Error(error.message || 'Gagal menyimpan data ruangan ke tabel rooms Supabase.');
   }
 }
 
-export async function fetchSupabaseRoomConfig(code: string): Promise<SupabaseRoomConfig> {
+export async function fetchSupabaseRoomRecord(code: string): Promise<{
+  config: SupabaseRoomConfig;
+  players: PersistedStudentProgress[] | null;
+}> {
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('rooms')
-    .select('config')
-    .eq('code', code)
-    .single();
 
+  if (hasPlayersColumn !== false) {
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('config, players')
+      .eq('code', code)
+      .single();
+
+    if (!error && data) {
+      hasPlayersColumn = true;
+      if (!data.config) {
+        throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
+      }
+      return {
+        config: data.config as SupabaseRoomConfig,
+        players: Array.isArray(data.players) ? (data.players as PersistedStudentProgress[]) : null,
+      };
+    }
+
+    if (error && isMissingPlayersColumnError(error)) {
+      hasPlayersColumn = false;
+    } else if (error) {
+      throw new Error(error.message || `Ruangan "${code}" tidak ditemukan di Supabase.`);
+    }
+  }
+
+  const { data, error } = await supabase.from('rooms').select('config').eq('code', code).single();
   if (error) {
     throw new Error(error.message || `Ruangan "${code}" tidak ditemukan di Supabase.`);
   }
   if (!data || !data.config) {
     throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
   }
-  return data.config as SupabaseRoomConfig;
+  return {
+    config: data.config as SupabaseRoomConfig,
+    players: null,
+  };
+}
+
+export async function fetchSupabaseRoomConfig(code: string): Promise<SupabaseRoomConfig> {
+  const rec = await fetchSupabaseRoomRecord(code);
+  return rec.config;
+}
+
+export async function syncStudentProgressToRoomPlayers(
+  code: string,
+  student: PersistedStudentProgress,
+): Promise<void> {
+  if (!code || !student?.id) return;
+  try {
+    const supabase = getSupabaseClient();
+    const { config, players: topPlayers } = await fetchSupabaseRoomRecord(code);
+    const existingList = Array.isArray(topPlayers)
+      ? [...topPlayers]
+      : Array.isArray(config.players)
+        ? [...config.players]
+        : Array.isArray(config.studentProgress)
+          ? [...config.studentProgress]
+          : [];
+
+    const lowerName = (student.name || '').trim().toLowerCase();
+    const sid = student.playerId || student.id;
+    const idx = existingList.findIndex(
+      (p) =>
+        p.id === sid ||
+        p.playerId === sid ||
+        (lowerName && (p.name || '').trim().toLowerCase() === lowerName),
+    );
+
+    if (idx >= 0) {
+      const prev = existingList[idx];
+      existingList[idx] = {
+        ...prev,
+        id: sid,
+        playerId: sid,
+        name: student.name || prev.name,
+        avatar: student.avatar || prev.avatar,
+        cp: Math.max(prev.cp || 0, student.cp || 0),
+        completedCPs:
+          student.completedCPs.length >= (prev.completedCPs?.length || 0)
+            ? student.completedCPs
+            : prev.completedCPs || [],
+        score: Math.max(prev.score || 0, student.score || 0),
+        pgCorrect: Math.max(prev.pgCorrect || 0, student.pgCorrect || 0),
+        pgWrong: Math.max(prev.pgWrong || 0, student.pgWrong || 0),
+        isianCorrect: Math.max(prev.isianCorrect || 0, student.isianCorrect || 0),
+        isianWrong: Math.max(prev.isianWrong || 0, student.isianWrong || 0),
+        isianDone: Boolean(prev.isianDone || student.isianDone),
+        falls: Math.max(prev.falls || 0, student.falls || 0),
+      };
+    } else {
+      existingList.push({ ...student, id: sid, playerId: sid });
+    }
+
+    if (hasPlayersColumn === true) {
+      await supabase.from('rooms').update({ players: existingList }).eq('code', code);
+    } else {
+      const nextConfig: SupabaseRoomConfig = {
+        ...config,
+        players: existingList,
+        studentProgress: existingList,
+      };
+      await supabase.from('rooms').update({ config: nextConfig }).eq('code', code);
+    }
+  } catch {
+    // Non-blocking fallback; broadcast & Presence carry real-time updates
+  }
 }
 
 export function buildSupabaseRoomConfig(room: HostRoomState): SupabaseRoomConfig {
+  const studentProgress: PersistedStudentProgress[] = Array.from(room.students.values()).map(
+    (s) => ({
+      id: s.id,
+      playerId: s.id,
+      name: s.name,
+      avatar: s.avatar,
+      cp: s.currentCP,
+      completedCPs: s.completedCPs,
+      score: s.score,
+      pgCorrect: s.correctCount,
+      pgWrong: s.wrongCount,
+      isianCorrect: s.essayCorrect,
+      isianWrong: s.essayWrong,
+      isianDone: s.essayDone,
+      falls: s.fallCount,
+    }),
+  );
+
   return {
     status: room.status,
     teacherId: room.teacherId,
@@ -264,8 +443,102 @@ export function buildSupabaseRoomConfig(room: HostRoomState): SupabaseRoomConfig
     kickedIds: Array.from(room.kickedIds),
     questions: room.questions,
     essayQuestions: room.essayQuestions,
+    studentProgress,
+    players: studentProgress,
     createdAt: Date.now(),
   };
+}
+
+export function mergeConfigStudentsIntoHostRoom(
+  room: HostRoomState,
+  config: SupabaseRoomConfig,
+  topLevelPlayers?: PersistedStudentProgress[] | null,
+): boolean {
+  const combined: PersistedStudentProgress[] = [
+    ...(Array.isArray(config.studentProgress) ? config.studentProgress : []),
+    ...(Array.isArray(config.players) ? config.players : []),
+    ...(Array.isArray(topLevelPlayers) ? topLevelPlayers : []),
+  ];
+  if (combined.length === 0) return false;
+
+  let changed = false;
+  for (const p of combined) {
+    const sid = p.playerId || p.id;
+    if (!sid || room.kickedIds.has(sid)) continue;
+
+    let existing = room.students.get(sid);
+    const cleanName = (p.name || 'Pendaki').trim();
+    if (!existing && cleanName) {
+      const lower = cleanName.toLowerCase();
+      for (const cand of room.students.values()) {
+        if (cand.name.trim().toLowerCase() === lower) {
+          existing = cand;
+          break;
+        }
+      }
+    }
+
+    if (!existing) {
+      room.students.set(sid, {
+        id: sid,
+        name: cleanName || 'Pendaki',
+        avatar: p.avatar,
+        currentCP: Math.min(25, Math.max(0, p.cp || 0)),
+        completedCPs: Array.isArray(p.completedCPs) ? p.completedCPs : [],
+        score: p.score || 0,
+        correctCount: p.pgCorrect || 0,
+        wrongCount: p.pgWrong || 0,
+        essayCorrect: p.isianCorrect || 0,
+        essayWrong: p.isianWrong || 0,
+        essayDone: Boolean(p.isianDone),
+        fallCount: p.falls || 0,
+        answers: [],
+        essayAnswers: [],
+        online: false,
+        lastSeenAt: Date.now(),
+        pose: { x: 0, y: 4.0, z: 148, yaw: 0, cp: p.cp || 0, state: 'idle' },
+      });
+      changed = true;
+    } else {
+      if (typeof p.cp === 'number' && p.cp > existing.currentCP) {
+        existing.currentCP = Math.min(25, p.cp);
+        changed = true;
+      }
+      if (typeof p.score === 'number' && p.score > existing.score) {
+        existing.score = p.score;
+        changed = true;
+      }
+      if (typeof p.pgCorrect === 'number' && p.pgCorrect > existing.correctCount) {
+        existing.correctCount = p.pgCorrect;
+        changed = true;
+      }
+      if (typeof p.pgWrong === 'number' && p.pgWrong > existing.wrongCount) {
+        existing.wrongCount = p.pgWrong;
+        changed = true;
+      }
+      if (typeof p.isianCorrect === 'number' && p.isianCorrect > existing.essayCorrect) {
+        existing.essayCorrect = p.isianCorrect;
+        changed = true;
+      }
+      if (typeof p.isianWrong === 'number' && p.isianWrong > existing.essayWrong) {
+        existing.essayWrong = p.isianWrong;
+        changed = true;
+      }
+      if (typeof p.falls === 'number' && p.falls > existing.fallCount) {
+        existing.fallCount = p.falls;
+        changed = true;
+      }
+      if (p.isianDone && !existing.essayDone) {
+        existing.essayDone = true;
+        changed = true;
+      }
+      if (Array.isArray(p.completedCPs) && p.completedCPs.length > existing.completedCPs.length) {
+        existing.completedCPs = p.completedCPs;
+        changed = true;
+      }
+    }
+  }
+  return changed;
 }
 
 export function createRoomRealtimeChannel(roomCode: string): RealtimeChannel {
@@ -287,6 +560,22 @@ export function sendRoomBroadcast(
       type: 'broadcast',
       event: 'room_event',
       payload: msg,
+    });
+  } catch {
+    // ignore transient channel send errors
+  }
+}
+
+export function sendTriggerDisasterBroadcast(
+  channel: RealtimeChannel | null | undefined,
+  payload: import('../types/game').TriggerDisasterPayload,
+) {
+  if (!channel) return;
+  try {
+    void channel.send({
+      type: 'broadcast',
+      event: 'trigger_disaster',
+      payload,
     });
   } catch {
     // ignore transient channel send errors

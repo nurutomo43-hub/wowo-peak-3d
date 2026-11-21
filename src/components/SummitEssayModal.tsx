@@ -68,7 +68,7 @@ export const SummitEssayModal: React.FC<SummitEssayModalProps> = ({
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
             <label htmlFor="summit-essay-input" className="block text-xs text-slate-400 mb-1.5">
-              Ketik jawaban singkat Anda di bawah ini (tidak membedakan huruf besar/kecil):
+              Ketik jawaban singkat Anda di bawah ini (mendukung kata kunci inti, sinonim/terjemahan, & toleransi kemiripan penulisan):
             </label>
             <input
               id="summit-essay-input"

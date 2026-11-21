@@ -101,10 +101,11 @@ const HAIR_STYLE_OPTIONS: ReadonlyArray<{ id: HairStyle; label: string }> = [
   { id: 'parted', label: 'Belah Tengah' },
   { id: 'spiky', label: 'Spiky Anime' },
   { id: 'undercut', label: 'Undercut Modern' },
+  { id: 'curly', label: 'Keriting Pendek' },
   { id: 'bob', label: 'Bob Rapi' },
   { id: 'long_loose', label: 'Panjang Terurai' },
   { id: 'ponytail', label: 'Kuncir Ekor Kuda' },
-  { id: 'twin_braids', label: 'Kepang Dua' },
+  { id: 'twin_braids', label: 'Kepang Dua / Twintails' },
   { id: 'long_tie', label: 'Ikat Samping' },
   { id: 'hijab', label: 'Hijab Gunung' },
   { id: 'covered', label: 'Tertutup / Polos' },
@@ -217,8 +218,28 @@ const BLEACH_ITEMS: ReadonlyArray<CostumeCatalogItem> = [
   { id: 'yamamoto', label: 'Genryusai Yamamoto', desc: 'Komandan Kapten Gotei 13, janggut putih & api Ryujin Jakka', accent: '#ea580c' },
 ];
 
+const DRAGON_BALL_ITEMS: ReadonlyArray<CostumeCatalogItem> = [
+  { id: 'goku', label: 'Son Goku', desc: 'Gi oranye Kamesennin & rambut tajam hitam', accent: '#f97316' },
+  { id: 'goku_ssj', label: 'Goku Super Saiyan', desc: 'Rambut emas menyala & aura ki emas', accent: '#facc15' },
+  { id: 'vegeta', label: 'Vegeta', desc: 'Armor tempur Saiyan biru-putih khas Pangeran', accent: '#2563eb' },
+  { id: 'gohan', label: 'Son Gohan', desc: 'Gi ungu Piccolo & sabuk merah ksatria', accent: '#9333ea' },
+  { id: 'piccolo', label: 'Piccolo', desc: 'Kulit hijau Namekian, sorban & jubah putih', accent: '#22c55e' },
+  { id: 'trunks', label: 'Future Trunks', desc: 'Jaket Capsule Corp, rambut ungu & pedang punggung', accent: '#c084fc' },
+  { id: 'beerus', label: 'Beerus (Dewa Kehancuran)', desc: 'Kulit ungu, telinga kucing tinggi, kerah Mesir & ekor panjang', accent: '#a855f7' },
+  { id: 'whis', label: 'Whis (Malaikat Pembimbing)', desc: 'Rambut putih menjulang, halo leher biru & tongkat malaikat', accent: '#38bdf8' },
+  { id: 'zeno', label: 'Zeno (Raja Segala Alam)', desc: 'Tubuh chibi, kepala oval telinga kuning & kanji 全 di dada', accent: '#facc15' },
+];
+
+const HXH_ITEMS: ReadonlyArray<CostumeCatalogItem> = [
+  { id: 'gon', label: 'Gon Freecss', desc: 'Jaket hijau petualang & rambut spiky tinggi', accent: '#16a34a' },
+  { id: 'killua', label: 'Killua Zoldyck', desc: 'Rambut perak, aura listrik & skateboard punggung', accent: '#38bdf8' },
+  { id: 'kurapika', label: 'Kurapika', desc: 'Tabard suku Kurta & rantai Nen bersinar', accent: '#eab308' },
+  { id: 'leorio', label: 'Leorio Paradinight', desc: 'Jas rapi biru gelap & kacamata hitam bundar', accent: '#475569' },
+  { id: 'hisoka', label: 'Hisoka Morow', desc: 'Simbol kartu punggung, bintang pipi & kartu', accent: '#ec4899' },
+];
+
 type EditorTab = 'outfit' | 'head' | 'back' | 'hero' | 'god' | 'anime';
-type AnimeSeriesTab = 'onepiece' | 'naruto' | 'bleach';
+type AnimeSeriesTab = 'onepiece' | 'naruto' | 'bleach' | 'dragonball' | 'hxh';
 
 function detectSoftwarePreviewGl(): boolean {
   try {
@@ -344,7 +365,7 @@ export const AvatarPreview3D: React.FC<{ avatar: AvatarConfig; role?: Role }> = 
         rootSpinRef.current.rotation.x = pitchRef.current;
       }
       if (cameraRef.current) {
-        cameraRef.current.position.z = -camDistRef.current;
+        cameraRef.current.position.z = camDistRef.current;
         cameraRef.current.lookAt(0, 1.28, 0);
       }
       if (avatarGroupRef.current) {
@@ -517,15 +538,25 @@ export const AvatarEditor: React.FC<AvatarEditorProps> = ({
     if (
       ONE_PIECE_ITEMS.some((a) => a.id === avatar.superheroSuit) ||
       NARUTO_ITEMS.some((a) => a.id === avatar.superheroSuit) ||
-      BLEACH_ITEMS.some((a) => a.id === avatar.superheroSuit)
+      BLEACH_ITEMS.some((a) => a.id === avatar.superheroSuit) ||
+      DRAGON_BALL_ITEMS.some((a) => a.id === avatar.superheroSuit) ||
+      HXH_ITEMS.some((a) => a.id === avatar.superheroSuit)
     ) {
       return 'anime';
     }
     return 'hero';
   };
 
+  const initialAnimeSeries = (): AnimeSeriesTab => {
+    if (NARUTO_ITEMS.some((a) => a.id === avatar.superheroSuit)) return 'naruto';
+    if (BLEACH_ITEMS.some((a) => a.id === avatar.superheroSuit)) return 'bleach';
+    if (DRAGON_BALL_ITEMS.some((a) => a.id === avatar.superheroSuit)) return 'dragonball';
+    if (HXH_ITEMS.some((a) => a.id === avatar.superheroSuit)) return 'hxh';
+    return 'onepiece';
+  };
+
   const [activeTab, setActiveTab] = useState<EditorTab>(initialTab);
-  const [animeSeries, setAnimeSeries] = useState<AnimeSeriesTab>('onepiece');
+  const [animeSeries, setAnimeSeries] = useState<AnimeSeriesTab>(initialAnimeSeries);
 
   const patch = (partial: Partial<AvatarConfig>) => {
     const next = { ...avatar, ...partial };
@@ -671,7 +702,7 @@ export const AvatarEditor: React.FC<AvatarEditorProps> = ({
           <div className="space-y-3">
             {/* Gender Selector */}
             <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-900 border border-white/10">
-              <span className="text-xs font-medium text-slate-300">Bentuk Tubuh / Gender Avatar</span>
+              <span className="text-xs font-medium text-slate-300">Gender &amp; Proporsi Tubuh</span>
               <div className="grid grid-cols-2 gap-1.5">
                 {(['male', 'female'] as GenderType[]).map((g) => (
                   <button
@@ -701,7 +732,7 @@ export const AvatarEditor: React.FC<AvatarEditorProps> = ({
                         : 'bg-slate-800 text-slate-300 hover:text-white'
                     }`}
                   >
-                    {g === 'male' ? 'Cowok (Putra)' : 'Cewek (Putri)'}
+                    {g === 'male' ? 'Cowo' : 'Cewe'}
                   </button>
                 ))}
               </div>
@@ -884,9 +915,67 @@ export const AvatarEditor: React.FC<AvatarEditorProps> = ({
           </div>
         )}
 
-        {/* TAB 2: AKSESORIS KEPALA & KACAMATA */}
+        {/* TAB 2: GENDER, RAMBUT, AKSESORIS KEPALA & KACAMATA */}
         {activeTab === 'head' && (
           <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-2.5 rounded-lg bg-slate-900 border border-white/10">
+              <div>
+                <span className="block text-[11px] font-medium text-slate-300 mb-1">
+                  Gender (Cowo / Cewe)
+                </span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(['male', 'female'] as GenderType[]).map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() =>
+                        patch({
+                          gender: g,
+                          hairStyle:
+                            g === 'female' && avatar.hairStyle === 'short'
+                              ? 'ponytail'
+                              : g === 'male' &&
+                                  (avatar.hairStyle === 'ponytail' ||
+                                    avatar.hairStyle === 'twin_braids' ||
+                                    avatar.hairStyle === 'long_loose')
+                                ? 'short'
+                                : avatar.hairStyle,
+                          pantsStyle:
+                            g === 'male' && avatar.pantsStyle === 'skirt'
+                              ? 'cargo'
+                              : avatar.pantsStyle,
+                        })
+                      }
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                        avatar.gender === g
+                          ? 'bg-sky-600 text-white'
+                          : 'bg-slate-800 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {g === 'male' ? 'Cowo' : 'Cewe'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-300 mb-1">
+                  Model Rambut
+                </label>
+                <select
+                  value={avatar.hairStyle}
+                  onChange={(e) => patch({ hairStyle: e.target.value as HairStyle })}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800 border border-white/15 text-xs text-white focus:outline-none focus:border-sky-400"
+                >
+                  {HAIR_STYLE_OPTIONS.map((hs) => (
+                    <option key={hs.id} value={hs.id}>
+                      {hs.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
                 Pilih Aksesoris Kepala
@@ -897,7 +986,7 @@ export const AvatarEditor: React.FC<AvatarEditorProps> = ({
                     key={opt.id}
                     type="button"
                     onClick={() => patch({ headAccessory: opt.id })}
-                    className={`px-2.5 py-2.5 rounded-lg border text-xs font-semibold text-center transition-colors cursor-pointer ${
+                    className={`px-2.5 py-2 rounded-lg border text-xs font-semibold text-center transition-colors cursor-pointer ${
                       avatar.headAccessory === opt.id
                         ? 'bg-sky-700/80 border-sky-400 text-white'
                         : 'bg-slate-900 border-white/10 text-slate-300 hover:border-white/25'
@@ -1015,14 +1104,14 @@ export const AvatarEditor: React.FC<AvatarEditorProps> = ({
           </div>
         )}
 
-        {/* TAB 6: ANIME (ONE PIECE, NARUTO, BLEACH TYBW) (39) */}
+        {/* TAB 6: ANIME (ONE PIECE, NARUTO, BLEACH TYBW, DRAGON BALL, HUNTER X HUNTER) (50) */}
         {activeTab === 'anime' && (
           <div className="space-y-2.5">
-            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-lg bg-slate-900 border border-white/10">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 p-1 rounded-lg bg-slate-900 border border-white/10">
               <button
                 type="button"
                 onClick={() => setAnimeSeries('onepiece')}
-                className={`py-1.5 px-2 rounded-md text-xs font-semibold cursor-pointer ${
+                className={`py-1.5 px-2 rounded-md text-[11px] font-semibold cursor-pointer ${
                   animeSeries === 'onepiece'
                     ? 'bg-rose-600 text-white'
                     : 'text-slate-300 hover:text-white'
@@ -1033,24 +1122,46 @@ export const AvatarEditor: React.FC<AvatarEditorProps> = ({
               <button
                 type="button"
                 onClick={() => setAnimeSeries('naruto')}
-                className={`py-1.5 px-2 rounded-md text-xs font-semibold cursor-pointer ${
+                className={`py-1.5 px-2 rounded-md text-[11px] font-semibold cursor-pointer ${
                   animeSeries === 'naruto'
                     ? 'bg-orange-600 text-white'
                     : 'text-slate-300 hover:text-white'
                 }`}
               >
-                Naruto &amp; Boruto (14)
+                Naruto (14)
               </button>
               <button
                 type="button"
                 onClick={() => setAnimeSeries('bleach')}
-                className={`py-1.5 px-2 rounded-md text-xs font-semibold cursor-pointer ${
+                className={`py-1.5 px-2 rounded-md text-[11px] font-semibold cursor-pointer ${
                   animeSeries === 'bleach'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-300 hover:text-white'
                 }`}
               >
-                Bleach TYBW (12)
+                Bleach (12)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAnimeSeries('dragonball')}
+                className={`py-1.5 px-2 rounded-md text-[11px] font-semibold cursor-pointer ${
+                  animeSeries === 'dragonball'
+                    ? 'bg-amber-600 text-white'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                Dragon Ball (9)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAnimeSeries('hxh')}
+                className={`py-1.5 px-2 rounded-md text-[11px] font-semibold cursor-pointer ${
+                  animeSeries === 'hxh'
+                    ? 'bg-emerald-600 text-white'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                Hunter x Hunter (5)
               </button>
             </div>
 
@@ -1060,6 +1171,10 @@ export const AvatarEditor: React.FC<AvatarEditorProps> = ({
               renderCostumeGrid(NARUTO_ITEMS, 'bg-orange-600/85 border-orange-300 text-white')}
             {animeSeries === 'bleach' &&
               renderCostumeGrid(BLEACH_ITEMS, 'bg-indigo-600/85 border-indigo-300 text-white')}
+            {animeSeries === 'dragonball' &&
+              renderCostumeGrid(DRAGON_BALL_ITEMS, 'bg-amber-600/85 border-amber-300 text-white')}
+            {animeSeries === 'hxh' &&
+              renderCostumeGrid(HXH_ITEMS, 'bg-emerald-600/85 border-emerald-300 text-white')}
           </div>
         )}
       </div>

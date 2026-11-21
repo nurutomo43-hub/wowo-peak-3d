@@ -450,6 +450,350 @@ function getCostumeChestTexture(suit: CharacterCostumeId, spec: CostumeStyleSpec
       ctx.moveTo(w * 0.12, h * 0.45);
       ctx.lineTo(w * 0.88, h * 0.45);
       ctx.stroke();
+    } else if (suit === 'goku' || suit === 'goku_ssj' || suit === 'gohan') {
+      // Martial arts Gi V-collar showing blue/purple undershirt + chest kanji badge (+Z ONLY)
+      ctx.fillStyle = spec.accent;
+      ctx.beginPath();
+      ctx.moveTo(w * 0.3, 0);
+      ctx.lineTo(w * 0.5, h * 0.42);
+      ctx.lineTo(w * 0.7, 0);
+      ctx.closePath();
+      ctx.fill();
+      // Left chest kanji emblem
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(w * 0.7, h * 0.34, 42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#09090b';
+      ctx.font = '900 44px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(suit === 'gohan' ? '魔' : '悟', w * 0.7, h * 0.34);
+      // Waist sash
+      ctx.fillStyle = spec.accent;
+      ctx.fillRect(0, h * 0.78, w, h * 0.18);
+    } else if (suit === 'vegeta') {
+      // Saiyan white chest armor with gold ribbed chest plates & shoulder straps (+Z)
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(w * 0.08, h * 0.12, w * 0.84, h * 0.72);
+      ctx.fillStyle = '#eab308';
+      for (let y = h * 0.28; y <= h * 0.64; y += h * 0.12) {
+        ctx.fillRect(w * 0.14, y, w * 0.31, 14);
+        ctx.fillRect(w * 0.55, y, w * 0.31, 14);
+      }
+      ctx.fillRect(w * 0.14, 0, w * 0.14, h * 0.18);
+      ctx.fillRect(w * 0.72, 0, w * 0.14, h * 0.18);
+    } else if (suit === 'piccolo') {
+      // Purple Namekian Gi with blue belt & white collar
+      ctx.fillStyle = '#3b0764';
+      ctx.beginPath();
+      ctx.moveTo(w * 0.32, 0);
+      ctx.lineTo(w * 0.5, h * 0.4);
+      ctx.lineTo(w * 0.68, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#2563eb';
+      ctx.fillRect(0, h * 0.78, w, h * 0.18);
+    } else if (suit === 'trunks') {
+      // Cropped blue Capsule Corp denim jacket over black tank top (+Z)
+      ctx.fillStyle = '#09090b';
+      ctx.fillRect(w * 0.3, 0, w * 0.4, h);
+      ctx.fillStyle = '#1e3a8a';
+      ctx.fillRect(w * 0.08, h * 0.14, w * 0.18, h * 0.2);
+      ctx.fillRect(w * 0.74, h * 0.14, w * 0.18, h * 0.2);
+      // Belt
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(0, h * 0.82, w, h * 0.18);
+    } else if (suit === 'beerus') {
+      // Egyptian God of Destruction collar, bare purple muscular chest & blue-gold sash (+Z)
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, w, h * 0.3);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(0, h * 0.25, w, h * 0.06);
+      for (let sx = w * 0.14; sx <= w * 0.86; sx += w * 0.18) {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(sx - 10, h * 0.04, 20, h * 0.2);
+      }
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.18, 28, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(w * 0.5, h * 0.34);
+      ctx.lineTo(w * 0.5, h * 0.72);
+      ctx.stroke();
+      // Royal blue & gold Egyptian waist sash
+      ctx.fillStyle = '#1d4ed8';
+      ctx.fillRect(0, h * 0.76, w, h * 0.24);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(w * 0.36, h * 0.78, w * 0.28, h * 0.18);
+    } else if (suit === 'whis') {
+      // Long maroon Angel robe with circular blue-white chest emblem & waist sash (+Z)
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.36, 70, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 10;
+      ctx.stroke();
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.36, 36, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.36, 18, 0, Math.PI * 2);
+      ctx.fill();
+      // Diagonal blue-white angel sash
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(0, h * 0.74, w, h * 0.16);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, h * 0.8, w, h * 0.05);
+    } else if (suit === 'zeno') {
+      // Royal pink-yellow-blue outfit with front kanji 全 badge (+Z)
+      ctx.fillStyle = '#db2777';
+      ctx.fillRect(0, 0, w, h * 0.24);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(w * 0.34, 0, w * 0.32, h * 0.76);
+      ctx.fillRect(0, h * 0.76, w, h * 0.18);
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.44, 72, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 7;
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.font = '900 84px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('全', w * 0.5, h * 0.45);
+    } else if (suit === 'gon') {
+      // Green jacket with orange collar & front trim (+Z)
+      ctx.fillStyle = '#f97316';
+      ctx.fillRect(w * 0.46, 0, w * 0.08, h * 0.88);
+      ctx.fillRect(0, 0, w, h * 0.14);
+      ctx.fillRect(0, h * 0.86, w, h * 0.14);
+      // Open V collar white undershirt
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.moveTo(w * 0.36, 0);
+      ctx.lineTo(w * 0.5, h * 0.24);
+      ctx.lineTo(w * 0.64, 0);
+      ctx.closePath();
+      ctx.fill();
+    } else if (suit === 'killua') {
+      // Navy vest over white shirt collar (+Z)
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.moveTo(w * 0.32, 0);
+      ctx.lineTo(w * 0.5, h * 0.26);
+      ctx.lineTo(w * 0.68, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillRect(0, h * 0.84, w, h * 0.16);
+    } else if (suit === 'kurapika') {
+      // Blue Kurta tabard with orange geometric hem + white front V (+Z)
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.moveTo(w * 0.34, 0);
+      ctx.lineTo(w * 0.5, h * 0.36);
+      ctx.lineTo(w * 0.66, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#f97316';
+      ctx.fillRect(0, h * 0.04, w, h * 0.08);
+      ctx.fillRect(0, h * 0.78, w, h * 0.16);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(w * 0.44, h * 0.81, w * 0.12, h * 0.1);
+    } else if (suit === 'leorio') {
+      // Dark navy suit jacket, white shirt & tie (+Z)
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.moveTo(w * 0.32, 0);
+      ctx.lineTo(w * 0.5, h * 0.56);
+      ctx.lineTo(w * 0.68, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(w * 0.47, h * 0.04, w * 0.06, h * 0.48);
+    } else if (suit === 'hisoka') {
+      // Magician vest with card suit symbols on chest (+Z)
+      ctx.fillStyle = '#be185d';
+      ctx.fillRect(0, 0, w, h * 0.2);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(0, h * 0.78, w, h * 0.22);
+      ctx.font = '900 72px serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#dc2626';
+      ctx.fillText('♦', w * 0.34, h * 0.42);
+      ctx.fillText('♥', w * 0.66, h * 0.62);
+      ctx.fillStyle = '#09090b';
+      ctx.fillText('♠', w * 0.66, h * 0.42);
+      ctx.fillText('♣', w * 0.34, h * 0.62);
+    }
+  });
+}
+
+function getCostumeBackTexture(suit: CharacterCostumeId, spec: CostumeStyleSpec): THREE.CanvasTexture | null {
+  if (suit === 'spiderman') return getSpiderWebTexture();
+  return getProceduralTexture(`costume_back_512_${suit}`, (ctx, w, h) => {
+    ctx.fillStyle = spec.torso;
+    ctx.fillRect(0, 0, w, h);
+
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, 'rgba(255,255,255,0.06)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.22)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    if (suit === 'luffy' || suit === 'luffy_gear5' || suit === 'ace') {
+      // Clean solid back of vest (NO chest X-scar on back!) + waist sash
+      ctx.fillStyle = spec.accent;
+      ctx.fillRect(0, h * 0.82, w, h * 0.18);
+      if (suit === 'ace') {
+        // Whitebeard pirate tattoo crest on Ace's bare back
+        ctx.fillStyle = '#7e22ce';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.4, 52, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#f1c27d';
+        ctx.fillRect(w * 0.45, h * 0.32, w * 0.1, h * 0.16);
+      }
+    } else if (suit === 'naruto' || suit === 'boruto' || suit === 'jiraiya') {
+      // Uzumaki red spiral clan crest on back (-Z) - NO front zipper on back!
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, w, h * 0.22);
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = 14;
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.46, 76, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.46, 44, 0, Math.PI * 1.65);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.46, 16, 0, Math.PI * 1.8);
+      ctx.stroke();
+    } else if (suit === 'sasuke' || suit === 'itachi' || suit === 'madara' || suit === 'obito') {
+      // Uchiha Clan red-white fan crest on back (-Z)
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.38, 66, Math.PI, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.38, 66, 0, Math.PI);
+      ctx.fill();
+      ctx.fillRect(w * 0.47, h * 0.5, w * 0.06, 62);
+    } else if (
+      suit === 'ichigo' ||
+      suit === 'gin' ||
+      suit === 'ichibe' ||
+      suit === 'kenpachi' ||
+      suit === 'toshiro' ||
+      suit === 'byakuya' ||
+      suit === 'rukia' ||
+      suit === 'yamamoto'
+    ) {
+      // Clean Shihakusho back with white waist obi sash ONLY (no front V-collar)
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, h * 0.76, w, h * 0.14);
+    } else if (suit === 'goku' || suit === 'goku_ssj' || suit === 'gohan') {
+      // Large Kanji crest on upper back (-Z) + waist sash
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.38, 86, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 8;
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.font = '900 96px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(suit === 'gohan' ? '魔' : '悟', w * 0.5, h * 0.39);
+      ctx.fillStyle = spec.accent;
+      ctx.fillRect(0, h * 0.78, w, h * 0.18);
+    } else if (suit === 'vegeta') {
+      // Clean white/blue Saiyan armored back plate (-Z)
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(w * 0.1, h * 0.12, w * 0.8, h * 0.7);
+      ctx.fillStyle = '#eab308';
+      ctx.fillRect(w * 0.14, 0, w * 0.14, h * 0.18);
+      ctx.fillRect(w * 0.72, 0, w * 0.14, h * 0.18);
+    } else if (suit === 'trunks') {
+      // Clean Capsule Corp blue jacket back + Capsule Corp round crest (-Z)
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(w * 0.5, h * 0.38, 58, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#09090b';
+      ctx.font = '900 40px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('CAPSULE', w * 0.5, h * 0.38);
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(0, h * 0.82, w, h * 0.18);
+    } else if (suit === 'beerus') {
+      // Clean purple back with subtle Egyptian collar rim & blue waist belt (-Z)
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, w, h * 0.14);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(0, h * 0.13, w, h * 0.04);
+      ctx.fillStyle = '#1d4ed8';
+      ctx.fillRect(0, h * 0.78, w, h * 0.22);
+    } else if (suit === 'whis') {
+      // Clean maroon Angel robe back with vertical pleat & waist sash ONLY (NO chest emblem on back)
+      ctx.fillStyle = 'rgba(0,0,0,0.24)';
+      ctx.fillRect(w * 0.485, h * 0.08, w * 0.03, h * 0.66);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(0, h * 0.74, w, h * 0.16);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, h * 0.8, w, h * 0.05);
+    } else if (suit === 'zeno') {
+      // Clean plain royal blue robe back with pink shoulder trim & yellow belt (NO kanji badge on back)
+      ctx.fillStyle = '#db2777';
+      ctx.fillRect(0, 0, w, h * 0.16);
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(0, h * 0.76, w, h * 0.18);
+    } else if (suit === 'gon') {
+      // Clean green jacket back with orange collar hem (no front zipper/V)
+      ctx.fillStyle = '#f97316';
+      ctx.fillRect(0, 0, w, h * 0.12);
+      ctx.fillRect(0, h * 0.86, w, h * 0.14);
+    } else if (suit === 'killua') {
+      // Clean navy back with white hem
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, h * 0.84, w, h * 0.16);
+    } else if (suit === 'kurapika') {
+      // Solid Kurta blue back tabard with orange bottom border
+      ctx.fillStyle = '#f97316';
+      ctx.fillRect(0, 0, w, h * 0.08);
+      ctx.fillRect(0, h * 0.78, w, h * 0.16);
+    } else if (suit === 'leorio') {
+      // Tailored navy suit back seam
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(w * 0.485, h * 0.1, w * 0.03, h * 0.88);
+    } else if (suit === 'hisoka') {
+      // Magician back panel with large crimson diamond & coattail seam
+      ctx.fillStyle = '#be185d';
+      ctx.beginPath();
+      ctx.moveTo(w * 0.5, h * 0.22);
+      ctx.lineTo(w * 0.68, h * 0.48);
+      ctx.lineTo(w * 0.5, h * 0.74);
+      ctx.lineTo(w * 0.32, h * 0.48);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(0, h * 0.78, w, h * 0.22);
+    } else {
+      // Clean center back seam for all other costumes
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(w * 0.488, h * 0.08, w * 0.024, h * 0.82);
     }
   });
 }
@@ -509,6 +853,7 @@ const VALID_HAIR: ReadonlySet<HairStyle> = new Set([
   'side_part',
   'spiky',
   'undercut',
+  'curly',
   'long_loose',
   'ponytail',
   'twin_braids',
@@ -573,9 +918,26 @@ interface CostumeStyleSpec {
   boot: string;
   skin?: string;
   hairColor?: string;
-  hairMode?: 'none' | 'spiky' | 'long' | 'bob' | 'bald' | 'ponytail' | 'slick' | 'twin_tails' | 'parted';
+  hairEmissive?: string;
+  hairMode?:
+    | 'none'
+    | 'spiky'
+    | 'gon_spiky'
+    | 'long'
+    | 'bob'
+    | 'bald'
+    | 'ponytail'
+    | 'slick'
+    | 'twin_tails'
+    | 'parted'
+    | 'curly'
+    | 'whis_tall';
   capeColor?: string;
   haloColor?: string;
+  neckHaloColor?: string;
+  tailColor?: string;
+  headOval?: boolean;
+  egyptCollar?: boolean;
   auraColor?: string;
   fullMask?:
     | 'ironman'
@@ -602,13 +964,16 @@ interface CostumeStyleSpec {
     | 'yoru'
     | 'kanabo'
     | 'staff'
+    | 'whis_staff'
     | 'lightning_bolt'
     | 'fire_orb'
     | 'rasengan'
     | 'clima_tact'
     | 'sode_shirayuki'
     | 'ryujin_jakka'
-    | 'gunbai';
+    | 'gunbai'
+    | 'kurta_chains'
+    | 'playing_card';
   headGear?:
     | 'straw_hat'
     | 'straw_hat_white'
@@ -627,8 +992,16 @@ interface CostumeStyleSpec {
     | 'mihawk_hat'
     | 'aokiji_glasses'
     | 'kenseikan'
-    | 'visor';
-  coat?: 'akatsuki' | 'marine' | 'hokage' | 'captain_white' | 'sleeveless_captain' | 'espada' | 'yhwach_cloak' | 'gundala_scarf' | 'feather_cape' | 'tsunade_haori' | 'jiraiya_haori';
+    | 'visor'
+    | 'piccolo_turban'
+    | 'leorio_glasses'
+    | 'beerus_ears'
+    | 'zeno_ears';
+  coat?: 'akatsuki' | 'marine' | 'hokage' | 'captain_white' | 'sleeveless_captain' | 'espada' | 'yhwach_cloak' | 'gundala_scarf' | 'feather_cape' | 'tsunade_haori' | 'jiraiya_haori' | 'whis_robe';
+  backProp?: 'trunks_sword' | 'killua_skateboard';
+  divisionNo?: string;
+  luffyCord?: boolean;
+  hisokaMarks?: boolean;
   missingLeftArm?: boolean;
   prayerBeads?: boolean;
   byakugouSeal?: boolean;
@@ -775,7 +1148,7 @@ const COSTUME_SPECS: Partial<Record<CharacterCostumeId, CostumeStyleSpec>> = {
   luffy: {
     torso: '#dc2626', accent: '#facc15', armUpper: '#dc2626', armLower: '#f1c27d',
     hand: '#f1c27d', legUpper: '#1d4ed8', legLower: '#f1c27d', boot: '#b45309',
-    hairColor: '#09090b', hairMode: 'spiky', headGear: 'straw_hat',
+    hairColor: '#09090b', hairMode: 'spiky', headGear: 'straw_hat', luffyCord: true,
   },
   luffy_gear5: {
     torso: '#f8fafc', accent: '#a855f7', armUpper: '#f8fafc', armLower: '#f8fafc',
@@ -920,7 +1293,7 @@ const COSTUME_SPECS: Partial<Record<CharacterCostumeId, CostumeStyleSpec>> = {
   gin: {
     torso: '#09090b', accent: '#cbd5e1', armUpper: '#09090b', armLower: '#09090b',
     hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#f8fafc',
-    hairColor: '#cbd5e1', hairMode: 'bob', coat: 'sleeveless_captain', weapon: 'sword',
+    hairColor: '#cbd5e1', hairMode: 'bob', coat: 'sleeveless_captain', divisionNo: '三', weapon: 'sword',
   },
   aizen: {
     torso: '#0f172a', accent: '#9333ea', armUpper: '#0f172a', armLower: '#0f172a',
@@ -930,7 +1303,7 @@ const COSTUME_SPECS: Partial<Record<CharacterCostumeId, CostumeStyleSpec>> = {
   ichibe: {
     torso: '#09090b', accent: '#dc2626', armUpper: '#09090b', armLower: '#09090b',
     hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#f8fafc',
-    hairColor: '#09090b', hairMode: 'bald', coat: 'captain_white', prayerBeads: true, weapon: 'kanabo', scaleMult: 1.16,
+    hairColor: '#09090b', hairMode: 'bald', coat: 'captain_white', divisionNo: '零', prayerBeads: true, weapon: 'kanabo', scaleMult: 1.16,
   },
   yhwach: {
     torso: '#09090b', accent: '#dc2626', armUpper: '#09090b', armLower: '#09090b',
@@ -950,17 +1323,17 @@ const COSTUME_SPECS: Partial<Record<CharacterCostumeId, CostumeStyleSpec>> = {
   kenpachi: {
     torso: '#09090b', accent: '#f8fafc', armUpper: '#09090b', armLower: '#09090b',
     hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#09090b', hairMode: 'spiky', coat: 'sleeveless_captain', weapon: 'sword', auraColor: '#facc15',
+    hairColor: '#09090b', hairMode: 'spiky', coat: 'sleeveless_captain', divisionNo: '十一', weapon: 'sword', auraColor: '#facc15',
   },
   toshiro: {
     torso: '#09090b', accent: '#22d3ee', armUpper: '#09090b', armLower: '#09090b',
     hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#f8fafc', hairMode: 'spiky', coat: 'captain_white', headGear: 'ice_crown', weapon: 'sword', auraColor: '#67e8f9',
+    hairColor: '#f8fafc', hairMode: 'spiky', coat: 'captain_white', divisionNo: '十', headGear: 'ice_crown', weapon: 'sword', auraColor: '#67e8f9',
   },
   byakuya: {
     torso: '#09090b', accent: '#f8fafc', armUpper: '#09090b', armLower: '#09090b',
     hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#0f172a', hairMode: 'long', headGear: 'kenseikan', coat: 'captain_white', weapon: 'sword', auraColor: '#f472b6',
+    hairColor: '#0f172a', hairMode: 'long', headGear: 'kenseikan', coat: 'captain_white', divisionNo: '六', weapon: 'sword', auraColor: '#f472b6',
   },
   rukia: {
     torso: '#09090b', accent: '#e0f2fe', armUpper: '#09090b', armLower: '#09090b',
@@ -970,7 +1343,84 @@ const COSTUME_SPECS: Partial<Record<CharacterCostumeId, CostumeStyleSpec>> = {
   yamamoto: {
     torso: '#09090b', accent: '#f97316', armUpper: '#09090b', armLower: '#09090b',
     hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#f8fafc', hairMode: 'bald', coat: 'captain_white', whiteBeard: true, weapon: 'ryujin_jakka', auraColor: '#f97316', scaleMult: 1.1,
+    hairColor: '#f8fafc', hairMode: 'bald', coat: 'captain_white', divisionNo: '一', whiteBeard: true, weapon: 'ryujin_jakka', auraColor: '#f97316', scaleMult: 1.1,
+  },
+
+  // 7. Anime: Dragon Ball (9)
+  goku: {
+    torso: '#f97316', accent: '#1d4ed8', armUpper: '#f97316', armLower: '#1d4ed8',
+    hand: '#f1c27d', legUpper: '#f97316', legLower: '#f97316', boot: '#1d4ed8',
+    hairColor: '#09090b', hairMode: 'spiky',
+  },
+  goku_ssj: {
+    torso: '#f97316', accent: '#1d4ed8', armUpper: '#f97316', armLower: '#1d4ed8',
+    hand: '#f1c27d', legUpper: '#f97316', legLower: '#f97316', boot: '#1d4ed8',
+    hairColor: '#fde047', hairEmissive: '#facc15', hairMode: 'spiky', auraColor: '#facc15',
+  },
+  vegeta: {
+    torso: '#1d4ed8', accent: '#f8fafc', armUpper: '#1d4ed8', armLower: '#f8fafc',
+    hand: '#f8fafc', legUpper: '#1d4ed8', legLower: '#1d4ed8', boot: '#f8fafc',
+    hairColor: '#09090b', hairMode: 'spiky',
+  },
+  gohan: {
+    torso: '#6b21a8', accent: '#dc2626', armUpper: '#6b21a8', armLower: '#dc2626',
+    hand: '#f1c27d', legUpper: '#6b21a8', legLower: '#6b21a8', boot: '#78350f',
+    hairColor: '#09090b', hairMode: 'spiky', auraColor: '#e2e8f0',
+  },
+  piccolo: {
+    torso: '#581c87', accent: '#2563eb', armUpper: '#4ade80', armLower: '#4ade80',
+    hand: '#4ade80', legUpper: '#581c87', legLower: '#581c87', boot: '#78350f',
+    skin: '#4ade80', hairColor: '#4ade80', hairMode: 'bald', headGear: 'piccolo_turban', capeColor: '#f8fafc',
+  },
+  trunks: {
+    torso: '#2563eb', accent: '#09090b', armUpper: '#2563eb', armLower: '#2563eb',
+    hand: '#f1c27d', legUpper: '#334155', legLower: '#334155', boot: '#eab308',
+    hairColor: '#c084fc', hairMode: 'parted', backProp: 'trunks_sword',
+  },
+  beerus: {
+    torso: '#a855f7', accent: '#fbbf24', armUpper: '#a855f7', armLower: '#a855f7',
+    hand: '#a855f7', legUpper: '#1d4ed8', legLower: '#1d4ed8', boot: '#1e293b',
+    skin: '#a855f7', hairColor: '#4c1d95', hairMode: 'bald', headGear: 'beerus_ears',
+    egyptCollar: true, tailColor: '#a855f7', auraColor: '#c084fc',
+  },
+  whis: {
+    torso: '#7f1d1d', accent: '#38bdf8', armUpper: '#7f1d1d', armLower: '#7f1d1d',
+    hand: '#93c5fd', legUpper: '#7f1d1d', legLower: '#7f1d1d', boot: '#1e1b4b',
+    skin: '#93c5fd', hairColor: '#f8fafc', hairMode: 'whis_tall',
+    coat: 'whis_robe', neckHaloColor: '#38bdf8', weapon: 'whis_staff', auraColor: '#7dd3fc',
+  },
+  zeno: {
+    torso: '#1d4ed8', accent: '#facc15', armUpper: '#db2777', armLower: '#facc15',
+    hand: '#818cf8', legUpper: '#1e1b4b', legLower: '#db2777', boot: '#facc15',
+    skin: '#818cf8', hairColor: '#09090b', hairMode: 'bald', headGear: 'zeno_ears',
+    scaleMult: 0.72, headOval: true, auraColor: '#fde047',
+  },
+
+  // 8. Anime: Hunter x Hunter (5)
+  gon: {
+    torso: '#16a34a', accent: '#f97316', armUpper: '#16a34a', armLower: '#f1c27d',
+    hand: '#f1c27d', legUpper: '#15803d', legLower: '#f1c27d', boot: '#166534',
+    hairColor: '#064e3b', hairMode: 'gon_spiky',
+  },
+  killua: {
+    torso: '#1e3a8a', accent: '#f8fafc', armUpper: '#f8fafc', armLower: '#f8fafc',
+    hand: '#f1c27d', legUpper: '#334155', legLower: '#f1c27d', boot: '#4338ca',
+    hairColor: '#e2e8f0', hairMode: 'spiky', backProp: 'killua_skateboard', auraColor: '#38bdf8',
+  },
+  kurapika: {
+    torso: '#1d4ed8', accent: '#f97316', armUpper: '#f8fafc', armLower: '#f8fafc',
+    hand: '#f1c27d', legUpper: '#f8fafc', legLower: '#f8fafc', boot: '#1e293b',
+    hairColor: '#fde047', hairMode: 'bob', weapon: 'kurta_chains',
+  },
+  leorio: {
+    torso: '#1e293b', accent: '#f8fafc', armUpper: '#1e293b', armLower: '#1e293b',
+    hand: '#f1c27d', legUpper: '#1e293b', legLower: '#1e293b', boot: '#09090b',
+    hairColor: '#09090b', hairMode: 'spiky', headGear: 'leorio_glasses',
+  },
+  hisoka: {
+    torso: '#f8fafc', accent: '#be185d', armUpper: '#f8fafc', armLower: '#be185d',
+    hand: '#fde2c4', legUpper: '#1e1b4b', legLower: '#facc15', boot: '#be185d',
+    skin: '#fde2c4', hairColor: '#db2777', hairMode: 'slick', hisokaMarks: true, weapon: 'playing_card', auraColor: '#ec4899',
   },
 };
 
@@ -1011,12 +1461,11 @@ export function buildR15AvatarMesh(
   const hairColor = spec?.hairColor || cfg.hairColor;
 
   let torsoMat: THREE.Material;
-  const costumeTex = spec ? getCostumeChestTexture(suit, spec) : null;
+  const costumeFrontTex = spec ? getCostumeChestTexture(suit, spec) : null;
+  const costumeBackTex = spec ? getCostumeBackTexture(suit, spec) : null;
   const dailyTex = !spec ? getDailyOutfitTexture(cfg.outfit, torsoMainColor) : null;
 
-  if (costumeTex) {
-    torsoMat = new THREE.MeshStandardMaterial({ map: costumeTex, roughness, metalness });
-  } else if (!spec && cfg.outfit === 'poncho') {
+  if (!spec && cfg.outfit === 'poncho') {
     torsoMat = new THREE.MeshPhysicalMaterial({
       color: torsoMainColor,
       roughness: 0.24,
@@ -1025,11 +1474,10 @@ export function buildR15AvatarMesh(
       opacity: 0.86,
       clearcoat: 0.65,
     });
-  } else if (dailyTex) {
-    torsoMat = new THREE.MeshStandardMaterial({ map: dailyTex, roughness: 0.62, metalness: 0.04 });
   } else if (!spec && cfg.outfit === 'school') {
     torsoMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.58 });
   } else {
+    // Solid neutral base cloth so front chest graphics never duplicate onto the back (-Z)
     torsoMat = new THREE.MeshStandardMaterial({ color: torsoMainColor, roughness, metalness });
   }
 
@@ -1065,14 +1513,19 @@ export function buildR15AvatarMesh(
   });
   const soleMat = new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.92 });
   const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.62 });
-  const hairMat = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.76 });
+  const hairMat = new THREE.MeshStandardMaterial({
+    color: hairColor,
+    emissive: spec?.hairEmissive || '#000000',
+    emissiveIntensity: spec?.hairEmissive ? 0.45 : 0,
+    roughness: spec?.hairEmissive ? 0.35 : 0.76,
+  });
 
   // 1. LOWER TORSO (Pelvis & Waist pivot at y = 1.02)
   const lowerTorso = new THREE.Group();
   lowerTorso.position.set(0, 1.02, 0);
   bodyRig.add(lowerTorso);
 
-  const pelvisWidth = isFemale ? 0.56 : 0.62;
+  const pelvisWidth = isFemale ? 0.55 : 0.62;
   const pelvisMesh = new THREE.Mesh(
     new RoundedBoxGeometry(pelvisWidth, 0.24, 0.35, 4, 0.07),
     suit === 'superman' ? accentMat : legUpperMat,
@@ -1101,19 +1554,49 @@ export function buildR15AvatarMesh(
   const belt = new THREE.Mesh(new RoundedBoxGeometry(pelvisWidth + 0.03, 0.1, 0.38, 3, 0.03), beltMat);
   belt.position.y = 0.16;
   lowerTorso.add(belt);
-  if (suit === 'batman' || suit === 'superman' || suit === 'gatotkaca' || suit === 'kamen_rider') {
-    const buckle = new THREE.Mesh(
-      new RoundedBoxGeometry(0.16, 0.12, 0.06, 2, 0.02),
-      new THREE.MeshStandardMaterial({
-        color: suit === 'kamen_rider' ? '#ef4444' : '#fde047',
-        emissive: suit === 'kamen_rider' ? '#dc2626' : '#000000',
-        emissiveIntensity: 0.6,
-        metalness: 0.75,
-        roughness: 0.25,
-      }),
-    );
-    buckle.position.set(0, 0.16, -0.2);
-    lowerTorso.add(buckle);
+
+  // Side belt loops so waist clearly reads front-vs-back
+  const beltLoopMat = new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.7 });
+  [-pelvisWidth * 0.34, pelvisWidth * 0.34].forEach((lx) => {
+    const loop = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.39), beltLoopMat);
+    loop.position.set(lx, 0.16, 0);
+    lowerTorso.add(loop);
+  });
+
+  // 3D Front Belt Buckle (+Z) for ALL characters (customizable & superhero costumes)
+  const buckle = new THREE.Mesh(
+    new RoundedBoxGeometry(0.15, 0.115, 0.055, 2, 0.02),
+    new THREE.MeshStandardMaterial({
+      color: suit === 'kamen_rider' ? '#ef4444' : spec ? '#fde047' : '#cbd5e1',
+      emissive: suit === 'kamen_rider' ? '#dc2626' : '#000000',
+      emissiveIntensity: suit === 'kamen_rider' ? 0.6 : 0,
+      metalness: 0.82,
+      roughness: 0.22,
+    }),
+  );
+  buckle.position.set(0, 0.16, 0.2);
+  const buckleInner = new THREE.Mesh(
+    new THREE.BoxGeometry(0.08, 0.055, 0.062),
+    new THREE.MeshStandardMaterial({ color: '#0f172a', metalness: 0.4, roughness: 0.45 }),
+  );
+  buckleInner.position.set(0, 0.16, 0.2);
+  lowerTorso.add(buckle, buckleInner);
+
+  // Beerus / Long Back Tail (-Z)
+  if (spec?.tailColor) {
+    const tailMat = new THREE.MeshStandardMaterial({ color: spec.tailColor, roughness: 0.55 });
+    const tailGroup = new THREE.Group();
+    tailGroup.position.set(0, 0.06, -0.18);
+    const seg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.048, 0.42, 8), tailMat);
+    seg1.rotation.x = Math.PI * 0.42;
+    seg1.position.set(0, -0.04, -0.19);
+    const seg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.04, 0.44, 8), tailMat);
+    seg2.rotation.x = Math.PI * 0.22;
+    seg2.position.set(0.04, 0.08, -0.5);
+    const tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.036, 8, 6), tailMat);
+    tailTip.position.set(0.06, 0.25, -0.64);
+    tailGroup.add(seg1, seg2, tailTip);
+    lowerTorso.add(tailGroup);
   }
 
   // 2. UPPER TORSO (Chest & Shoulders pivot at y = 0.20 inside lowerTorso)
@@ -1121,8 +1604,8 @@ export function buildR15AvatarMesh(
   upperTorso.position.set(0, 0.2, 0);
   lowerTorso.add(upperTorso);
 
-  const chestW = isFemale ? 0.62 : 0.72;
-  const chestD = isFemale ? 0.36 : 0.4;
+  const chestW = isFemale ? 0.58 : 0.75;
+  const chestD = isFemale ? 0.34 : 0.41;
   const chestMesh = new THREE.Mesh(
     new RoundedBoxGeometry(chestW, 0.62, chestD, 4, 0.09),
     torsoMat,
@@ -1131,29 +1614,101 @@ export function buildR15AvatarMesh(
   chestMesh.castShadow = castShadow;
   upperTorso.add(chestMesh);
 
+  // Female slimmer tapered waist silhouette
+  if (isFemale) {
+    const waistCollar = new THREE.Mesh(
+      new RoundedBoxGeometry(0.5, 0.18, 0.33, 3, 0.06),
+      torsoMat,
+    );
+    waistCollar.position.set(0, 0.11, 0);
+    upperTorso.add(waistCollar);
+  }
+
+  // Dedicated Front (+Z) panel for daily & costume chest textures so front artwork NEVER duplicates onto back (-Z)
+  if (dailyTex || costumeFrontTex) {
+    const frontMat = new THREE.MeshStandardMaterial({
+      map: (costumeFrontTex || dailyTex) as THREE.CanvasTexture,
+      roughness: spec ? roughness : 0.62,
+      metalness: spec ? metalness : 0.04,
+    });
+    const frontPanel = new THREE.Mesh(new THREE.PlaneGeometry(chestW - 0.08, 0.54), frontMat);
+    frontPanel.position.set(0, 0.32, chestD * 0.5 + 0.004);
+    upperTorso.add(frontPanel);
+  }
+
+  // Dedicated Back (-Z) panel for costume back graphics (clan crests, kanji, clean vest backs)
+  if (spec && costumeBackTex) {
+    const backMat = new THREE.MeshStandardMaterial({
+      map: costumeBackTex,
+      roughness,
+      metalness,
+    });
+    const backPanel = new THREE.Mesh(new THREE.PlaneGeometry(chestW - 0.08, 0.54), backMat);
+    backPanel.rotation.y = Math.PI;
+    backPanel.position.set(0, 0.32, -chestD * 0.5 - 0.004);
+    upperTorso.add(backPanel);
+  }
+
   let ponchoHem: THREE.Object3D | undefined;
   let ponchoHood: THREE.Object3D | undefined;
 
   if (!spec) {
+    // Contoured 3D Rear Jacket/Shirt Panel (-Z) so front chest pockets/zippers/buttons never bleed onto the back
+    const backClothColor = cfg.outfit === 'school' ? '#f8fafc' : torsoMainColor;
+    const backClothMat = new THREE.MeshStandardMaterial({ color: backClothColor, roughness: 0.72 });
+    const backSeamMat = new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.78 });
+    const rearPanel = new THREE.Mesh(
+      new RoundedBoxGeometry(chestW - 0.05, 0.56, 0.03, 2, 0.012),
+      backClothMat,
+    );
+    rearPanel.position.set(0, 0.32, -chestD * 0.5 - 0.004);
+    const rearSeamV = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.52, 0.036), backSeamMat);
+    rearSeamV.position.set(0, 0.32, -chestD * 0.5 - 0.006);
+    const rearYokeH = new THREE.Mesh(new THREE.BoxGeometry(chestW - 0.08, 0.028, 0.038), backSeamMat);
+    rearYokeH.position.set(0, 0.48, -chestD * 0.5 - 0.006);
+    const backEmblem = new THREE.Mesh(
+      new THREE.ConeGeometry(0.075, 0.095, 3),
+      new THREE.MeshStandardMaterial({ color: '#f59e0b', roughness: 0.45 }),
+    );
+    backEmblem.position.set(0, 0.54, -chestD * 0.5 - 0.012);
+    upperTorso.add(rearPanel, rearSeamV, rearYokeH, backEmblem);
+
+    const innerShirtMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.52 });
+    const buttonMat = new THREE.MeshStandardMaterial({ color: '#e2e8f0', metalness: 0.45, roughness: 0.35 });
+
     if (cfg.outfit === 'windbreaker') {
       const yoke = new THREE.Mesh(new RoundedBoxGeometry(chestW + 0.02, 0.2, chestD + 0.02, 3, 0.07), accentMat);
       yoke.position.set(0, 0.54, 0);
       const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.23, 0.14, 14), accentMat);
       collar.position.set(0, 0.67, 0);
-      const zip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.58, 0.04), accentMat);
-      zip.position.set(0, 0.32, -(chestD * 0.5 + 0.006));
-      upperTorso.add(yoke, collar, zip);
+      // Open V-collar front inner shirt + metallic zipper + chest pockets (+Z)
+      const innerV = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.22, 3), innerShirtMat);
+      innerV.rotation.x = Math.PI;
+      innerV.scale.set(1, 1, 0.22);
+      innerV.position.set(0, 0.54, chestD * 0.5 + 0.012);
+      const zip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.44, 0.04), accentMat);
+      zip.position.set(0, 0.25, chestD * 0.5 + 0.008);
+      const zipPull = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.065, 0.05), buttonMat);
+      zipPull.position.set(0, 0.45, chestD * 0.5 + 0.016);
+      upperTorso.add(yoke, collar, innerV, zip, zipPull);
+      // 3D Hiker Jacket Chest Pockets & Front Collar Flap (+Z)
+      const pocketMat = new THREE.MeshStandardMaterial({ color: torsoMainColor, roughness: 0.72 });
+      const flapMat = new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.65 });
+      [-0.17, 0.17].forEach((px) => {
+        const pocket = new THREE.Mesh(new RoundedBoxGeometry(0.14, 0.16, 0.035, 2, 0.01), pocketMat);
+        pocket.position.set(px, 0.24, chestD * 0.5 + 0.012);
+        const flap = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.045, 0.042), flapMat);
+        flap.position.set(px, 0.32, chestD * 0.5 + 0.016);
+        upperTorso.add(pocket, flap);
+      });
     } else if (cfg.outfit === 'formal') {
-      const shirt = new THREE.Mesh(
-        new THREE.BoxGeometry(0.24, 0.52, 0.05),
-        new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.5 }),
-      );
-      shirt.position.set(0, 0.36, -(chestD * 0.5 - 0.005));
+      const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.52, 0.05), innerShirtMat);
+      shirt.position.set(0, 0.36, chestD * 0.5 - 0.005);
       const tie = new THREE.Mesh(
         new THREE.BoxGeometry(0.08, 0.44, 0.04),
         new THREE.MeshStandardMaterial({ color: '#b91c1c', roughness: 0.45 }),
       );
-      tie.position.set(0, 0.32, -(chestD * 0.5 + 0.015));
+      tie.position.set(0, 0.32, chestD * 0.5 + 0.015);
       upperTorso.add(shirt, tie);
     } else if (cfg.outfit === 'poncho') {
       const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.56, 0.54, 14, 1, true), torsoMat);
@@ -1161,7 +1716,7 @@ export function buildR15AvatarMesh(
       upperTorso.add(skirt);
       ponchoHem = skirt;
       const hood = new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.24, 0.26, 3, 0.08), torsoMat);
-      hood.position.set(0, 0.68, 0.18);
+      hood.position.set(0, 0.68, -0.18);
       upperTorso.add(hood);
       ponchoHood = hood;
     } else if (cfg.outfit === 'koko') {
@@ -1171,7 +1726,7 @@ export function buildR15AvatarMesh(
         new THREE.BoxGeometry(0.18, 0.48, 0.04),
         new THREE.MeshStandardMaterial({ map: getKokoEmbroideryTexture(cfg.jacket), roughness: 0.6 }),
       );
-      placket.position.set(0, 0.36, -(chestD * 0.5 + 0.005));
+      placket.position.set(0, 0.36, chestD * 0.5 + 0.005);
       upperTorso.add(collar, placket);
     } else if (cfg.outfit === 'kebaya') {
       const selendang = new THREE.Mesh(
@@ -1183,28 +1738,48 @@ export function buildR15AvatarMesh(
       upperTorso.add(selendang);
     } else if (cfg.outfit === 'school') {
       const tie = new THREE.Mesh(
-        new THREE.BoxGeometry(0.1, 0.36, 0.04),
+        new THREE.BoxGeometry(0.1, 0.38, 0.04),
         new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.5 }),
       );
-      tie.position.set(0, 0.42, -(chestD * 0.5 + 0.015));
+      tie.position.set(0, 0.42, chestD * 0.5 + 0.015);
       const pocket = new THREE.Mesh(
         new THREE.BoxGeometry(0.11, 0.11, 0.03),
         new THREE.MeshStandardMaterial({ color: cfg.jacket, roughness: 0.55 }),
       );
-      pocket.position.set(0.16, 0.44, -(chestD * 0.5 + 0.01));
+      pocket.position.set(-0.16, 0.44, chestD * 0.5 + 0.01);
       upperTorso.add(tie, pocket);
     } else if (cfg.outfit === 'flannel') {
       const collar = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.1, 0.28), torsoMat);
       collar.position.set(0, 0.63, 0);
-      upperTorso.add(collar);
+      const innerTee = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.2, 3), innerShirtMat);
+      innerTee.rotation.x = Math.PI;
+      innerTee.scale.set(1, 1, 0.22);
+      innerTee.position.set(0, 0.53, chestD * 0.5 + 0.014);
+      upperTorso.add(collar, innerTee);
+      const pocketMat = new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.8 });
+      [-0.16, 0.16].forEach((px) => {
+        const pocket = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.14, 0.03), pocketMat);
+        pocket.position.set(px, 0.36, chestD * 0.5 + 0.01);
+        upperTorso.add(pocket);
+      });
+      [0.14, 0.26, 0.38].forEach((by) => {
+        const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.025, 8), buttonMat);
+        btn.rotation.x = Math.PI / 2;
+        btn.position.set(0, by, chestD * 0.5 + 0.012);
+        upperTorso.add(btn);
+      });
     } else if (cfg.outfit === 'casual') {
+      const collarOpen = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.22, 3), innerShirtMat);
+      collarOpen.rotation.x = Math.PI;
+      collarOpen.scale.set(1, 1, 0.22);
+      collarOpen.position.set(0, 0.54, chestD * 0.5 + 0.009);
       const kacu = new THREE.Mesh(
-        new THREE.ConeGeometry(0.16, 0.34, 4),
+        new THREE.ConeGeometry(0.15, 0.34, 4),
         new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.68 }),
       );
       kacu.rotation.x = Math.PI;
-      kacu.position.set(0, 0.46, -(chestD * 0.5 + 0.01));
-      upperTorso.add(kacu);
+      kacu.position.set(0, 0.44, chestD * 0.5 + 0.016);
+      upperTorso.add(collarOpen, kacu);
     }
   } else {
     // Costume chest emblems & armor details
@@ -1214,21 +1789,19 @@ export function buildR15AvatarMesh(
         new THREE.TorusGeometry(0.11, 0.025, 8, 18),
         new THREE.MeshStandardMaterial({ color: '#e2e8f0', metalness: 0.9, roughness: 0.2 }),
       );
-      reactorRing.position.set(0, 0.4, -0.22);
+      reactorRing.position.set(0, 0.4, 0.22);
       const reactorCore = new THREE.Mesh(
         new THREE.CircleGeometry(0.095, 16),
         new THREE.MeshBasicMaterial({ color: coreColor }),
       );
-      reactorCore.rotation.y = Math.PI;
-      reactorCore.position.set(0, 0.4, -0.232);
+      reactorCore.position.set(0, 0.4, 0.232);
       upperTorso.add(reactorRing, reactorCore);
     } else if (suit === 'superman') {
       const shield = new THREE.Mesh(
         new THREE.PlaneGeometry(0.28, 0.26),
         new THREE.MeshBasicMaterial({ map: getSupermanCrestTexture(), transparent: true, side: THREE.DoubleSide }),
       );
-      shield.rotation.y = Math.PI;
-      shield.position.set(0, 0.4, -0.212);
+      shield.position.set(0, 0.4, 0.212);
       upperTorso.add(shield);
     } else if (suit === 'captain_america' || suit === 'gatotkaca') {
       const star = new THREE.Mesh(
@@ -1240,16 +1813,16 @@ export function buildR15AvatarMesh(
         }),
       );
       star.scale.set(1, 1, 0.35);
-      star.position.set(0, 0.4, -0.22);
+      star.position.set(0, 0.4, 0.22);
       upperTorso.add(star);
     } else if (suit === 'batman') {
       const batPlate = new THREE.Mesh(
         new RoundedBoxGeometry(0.32, 0.14, 0.05, 2, 0.02),
         new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.35 }),
       );
-      batPlate.position.set(0, 0.42, -0.205);
+      batPlate.position.set(0, 0.42, 0.205);
       const goldRim = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.17, 0.03), accentMat);
-      goldRim.position.set(0, 0.42, -0.195);
+      goldRim.position.set(0, 0.42, 0.195);
       upperTorso.add(goldRim, batPlate);
     } else if (suit === 'flash' || suit === 'gundala') {
       const bolt = new THREE.Mesh(
@@ -1257,7 +1830,7 @@ export function buildR15AvatarMesh(
         new THREE.MeshStandardMaterial({ color: '#fde047', emissive: '#eab308', emissiveIntensity: 0.7 }),
       );
       bolt.rotation.z = 0.4;
-      bolt.position.set(0, 0.42, -0.215);
+      bolt.position.set(0, 0.42, 0.215);
       upperTorso.add(bolt);
     }
 
@@ -1278,49 +1851,132 @@ export function buildR15AvatarMesh(
                 ? '#16a34a'
                 : spec.coat === 'jiraiya_haori'
                   ? '#b91c1c'
-                  : '#dc2626';
+                  : spec.coat === 'whis_robe'
+                    ? '#7f1d1d'
+                    : '#dc2626';
       const coatMat = new THREE.MeshStandardMaterial({ color: coatColor, roughness: 0.65, side: THREE.DoubleSide });
       if (spec.coat === 'gundala_scarf') {
         const scarf = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.07, 8, 18), coatMat);
         scarf.rotation.x = Math.PI / 2;
         scarf.position.set(0, 0.63, 0);
         const tail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.56, 0.04), coatMat);
-        tail.rotation.x = 0.35;
-        tail.position.set(0.14, 0.42, 0.28);
+        tail.rotation.x = -0.35;
+        tail.position.set(0.14, 0.42, -0.28);
         upperTorso.add(scarf, tail);
       } else if (spec.coat === 'feather_cape') {
         const fluff = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.14, 10, 18), coatMat);
         fluff.rotation.x = Math.PI / 2;
-        fluff.position.set(0, 0.62, 0.08);
+        fluff.position.set(0, 0.62, -0.08);
         const backPlume = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.9, 0.12), coatMat);
-        backPlume.position.set(0, 0.14, 0.24);
+        backPlume.position.set(0, 0.14, -0.24);
         upperTorso.add(fluff, backPlume);
       } else {
         const coatSkirt = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.54, 0.78, 14, 1, true), coatMat);
-        coatSkirt.position.set(0, -0.1, 0.02);
+        coatSkirt.position.set(0, -0.1, -0.02);
         upperTorso.add(coatSkirt);
-        const highCollar = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.26, 0.28, 0.22, 12, 1, true, Math.PI * 0.2, Math.PI * 1.6),
-          coatMat,
-        );
-        highCollar.rotation.y = Math.PI;
-        highCollar.position.set(0, 0.7, 0.02);
-        upperTorso.add(highCollar);
+        if (spec.coat === 'whis_robe') {
+          const robeTrim = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.525, 0.545, 0.09, 14, 1, true),
+            new THREE.MeshStandardMaterial({ color: '#38bdf8', roughness: 0.45, side: THREE.DoubleSide }),
+          );
+          robeTrim.position.set(0, -0.45, -0.02);
+          upperTorso.add(robeTrim);
+        } else {
+          const highCollar = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.26, 0.28, 0.22, 12, 1, true, Math.PI * 0.2, Math.PI * 1.6),
+            coatMat,
+          );
+          highCollar.position.set(0, 0.7, -0.02);
+          upperTorso.add(highCollar);
+        }
         if (spec.coat === 'akatsuki') {
           const cloud = new THREE.Mesh(
             new THREE.SphereGeometry(0.09, 8, 6),
             new THREE.MeshBasicMaterial({ color: '#dc2626' }),
           );
           cloud.scale.set(1.5, 0.7, 0.3);
-          cloud.position.set(0.15, 0.35, -0.21);
+          cloud.position.set(0.15, 0.35, 0.21);
           upperTorso.add(cloud);
         }
         if (spec.coat === 'captain_white' || spec.coat === 'sleeveless_captain') {
           const haoriBack = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.85, 0.06), coatMat);
-          haoriBack.position.set(0, 0.12, 0.23);
+          haoriBack.position.set(0, 0.12, -0.23);
           upperTorso.add(haoriBack);
+          if (spec.divisionNo) {
+            const crestTex = getProceduralTexture(`gotei_div_${spec.divisionNo}`, (ctx, w, h) => {
+              ctx.fillStyle = '#f8fafc';
+              ctx.fillRect(0, 0, w, h);
+              ctx.strokeStyle = '#09090b';
+              ctx.lineWidth = 22;
+              ctx.beginPath();
+              ctx.moveTo(w / 2, 32);
+              ctx.lineTo(w - 32, h / 2);
+              ctx.lineTo(w / 2, h - 32);
+              ctx.lineTo(32, h / 2);
+              ctx.closePath();
+              ctx.stroke();
+              ctx.fillStyle = '#09090b';
+              ctx.font = '900 132px serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(spec.divisionNo || '', w / 2, h / 2 + 8);
+            }, 256, 256);
+            const divBadge = new THREE.Mesh(
+              new THREE.PlaneGeometry(0.42, 0.42),
+              new THREE.MeshBasicMaterial({ map: crestTex }),
+            );
+            divBadge.rotation.y = Math.PI;
+            divBadge.position.set(0, 0.22, -0.265);
+            upperTorso.add(divBadge);
+          }
         }
       }
+    }
+
+    // Luffy Straw Hat Cord hanging behind neck (-Z)
+    if (spec?.luffyCord) {
+      const cordMat = new THREE.MeshStandardMaterial({ color: '#b45309', roughness: 0.75 });
+      [-0.1, 0.1].forEach((cx) => {
+        const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.34, 6), cordMat);
+        cord.position.set(cx, 0.56, -chestD * 0.5 - 0.025);
+        cord.rotation.z = cx < 0 ? 0.28 : -0.28;
+        upperTorso.add(cord);
+      });
+      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), cordMat);
+      knot.position.set(0, 0.42, -chestD * 0.5 - 0.03);
+      upperTorso.add(knot);
+    }
+
+    // Trunks Sword or Killua Skateboard strapped across back (-Z)
+    if (spec?.backProp === 'trunks_sword') {
+      const scabbard = new THREE.Mesh(
+        new THREE.BoxGeometry(0.11, 1.35, 0.07),
+        new THREE.MeshStandardMaterial({ color: '#1e3a8a', roughness: 0.55 }),
+      );
+      scabbard.rotation.z = -0.45;
+      scabbard.position.set(0.02, 0.35, -0.26);
+      const hilt = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.03, 0.03, 0.32, 8),
+        new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.7, roughness: 0.25 }),
+      );
+      hilt.rotation.z = -0.45;
+      hilt.position.set(-0.28, 0.92, -0.26);
+      upperTorso.add(scabbard, hilt);
+    } else if (spec?.backProp === 'killua_skateboard') {
+      const deck = new THREE.Mesh(
+        new RoundedBoxGeometry(0.28, 0.92, 0.04, 2, 0.015),
+        new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.45 }),
+      );
+      deck.rotation.z = 0.28;
+      deck.position.set(0, 0.36, -0.25);
+      const wheelMat = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.5 });
+      [-0.24, 0.24].forEach((wy) => {
+        const axle = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.08), wheelMat);
+        axle.rotation.z = 0.28;
+        axle.position.set(-wy * 0.28, 0.36 + wy, -0.29);
+        upperTorso.add(axle);
+      });
+      upperTorso.add(deck);
     }
 
     // Giant Red Prayer Beads (Ichibe / Ace)
@@ -1341,9 +1997,26 @@ export function buildR15AvatarMesh(
         new THREE.MeshStandardMaterial({ color: '#b91c1c', roughness: 0.65 }),
       );
       scroll.rotation.z = Math.PI / 2;
-      scroll.position.set(0, 0.42, 0.3);
+      scroll.position.set(0, 0.42, -0.3);
       upperTorso.add(scroll);
     }
+  }
+
+  // Beerus Egyptian God of Destruction 3D Collar
+  if (spec?.egyptCollar) {
+    const collarRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.24, 0.055, 8, 18),
+      new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.4 }),
+    );
+    collarRing.rotation.x = Math.PI / 2;
+    collarRing.position.set(0, 0.61, 0);
+    const goldRim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.265, 0.022, 8, 18),
+      new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.85, roughness: 0.25 }),
+    );
+    goldRim.rotation.x = Math.PI / 2;
+    goldRim.position.set(0, 0.585, 0);
+    upperTorso.add(collarRing, goldRim);
   }
 
   // Distinct Neck
@@ -1353,6 +2026,17 @@ export function buildR15AvatarMesh(
   );
   neckMesh.position.set(0, 0.68, 0);
   upperTorso.add(neckMesh);
+
+  // Whis Angel Neck Halo (floating cyan/light-blue ring around neck)
+  if (spec?.neckHaloColor) {
+    const neckHalo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.32, 0.028, 10, 26),
+      new THREE.MeshBasicMaterial({ color: spec.neckHaloColor, transparent: true, opacity: 0.9 }),
+    );
+    neckHalo.rotation.x = Math.PI / 2;
+    neckHalo.position.set(0, 0.69, 0);
+    upperTorso.add(neckHalo);
+  }
 
   // 3. HEAD GROUP
   const headGroup = new THREE.Group();
@@ -1377,25 +2061,28 @@ export function buildR15AvatarMesh(
                   : skinMat;
 
   const headMesh = new THREE.Mesh(new RoundedBoxGeometry(0.52, 0.52, 0.5, 5, 0.18), headMat);
+  if (spec?.headOval) {
+    headMesh.scale.set(1.18, 0.94, 0.94);
+  }
   headMesh.castShadow = castShadow;
   headGroup.add(headMesh);
 
-  // Face / Mask
+  // Face / Mask (+Z Front)
   const fullMaskType = spec?.fullMask;
   if (fullMaskType === 'ironman' || fullMaskType === 'ultraman' || fullMaskType === 'k_cyber') {
     const facePlate = new THREE.Mesh(new RoundedBoxGeometry(0.38, 0.42, 0.08, 3, 0.04), accentMat);
-    facePlate.position.set(0, -0.02, -0.23);
+    facePlate.position.set(0, -0.02, 0.23);
     const eyeColor = fullMaskType === 'ultraman' ? '#fef08a' : '#22d3ee';
     const eyeGlowMat = new THREE.MeshBasicMaterial({ color: eyeColor });
     [-0.095, 0.095].forEach((ex) => {
       const eye = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.045, 0.03), eyeGlowMat);
-      eye.position.set(ex, 0.04, -0.27);
+      eye.position.set(ex, 0.04, 0.27);
       headGroup.add(eye);
     });
     headGroup.add(facePlate);
     if (fullMaskType === 'ultraman') {
       const fin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.34), headMat);
-      fin.position.set(0, 0.32, 0.02);
+      fin.position.set(0, 0.32, -0.02);
       headGroup.add(fin);
     }
   } else if (fullMaskType === 'spiderman' || fullMaskType === 'kamen_rider') {
@@ -1404,17 +2091,17 @@ export function buildR15AvatarMesh(
     const eyeMat = new THREE.MeshBasicMaterial({ color: eyeColor });
     [-0.1, 0.1].forEach((ex, idx) => {
       const rim = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.12, 0.04), rimMat);
-      rim.position.set(ex, 0.04, -0.245);
+      rim.position.set(ex, 0.04, 0.245);
       rim.rotation.z = idx === 0 ? -0.22 : 0.22;
       const lens = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.085, 0.045), eyeMat);
-      lens.position.set(ex, 0.04, -0.25);
+      lens.position.set(ex, 0.04, 0.25);
       lens.rotation.z = idx === 0 ? -0.22 : 0.22;
       headGroup.add(rim, lens);
     });
     if (fullMaskType === 'kamen_rider') {
       [-0.1, 0.1].forEach((ax) => {
         const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.28, 6), accentMat);
-        ant.position.set(ax, 0.36, -0.15);
+        ant.position.set(ax, 0.36, 0.15);
         ant.rotation.z = ax < 0 ? 0.35 : -0.35;
         headGroup.add(ant);
       });
@@ -1422,7 +2109,7 @@ export function buildR15AvatarMesh(
   } else {
     if (fullMaskType === 'batman' || fullMaskType === 'flash') {
       const jaw = new THREE.Mesh(new RoundedBoxGeometry(0.4, 0.19, 0.12, 3, 0.05), skinMat);
-      jaw.position.set(0, -0.15, -0.21);
+      jaw.position.set(0, -0.15, 0.21);
       headGroup.add(jaw);
       if (fullMaskType === 'batman') {
         [-0.17, 0.17].forEach((bx) => {
@@ -1442,34 +2129,33 @@ export function buildR15AvatarMesh(
         new RoundedBoxGeometry(0.53, 0.24, 0.26, 3, 0.05),
         new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.7 }),
       );
-      faceMask.position.set(0, -0.12, -0.14);
+      faceMask.position.set(0, -0.12, 0.14);
       headGroup.add(faceMask);
     } else if (fullMaskType === 'aizen_eyepatch') {
       const patch = new THREE.Mesh(
         new THREE.BoxGeometry(0.16, 0.1, 0.05),
         new THREE.MeshBasicMaterial({ color: '#09090b' }),
       );
-      patch.position.set(0.1, 0.03, -0.255);
+      patch.position.set(-0.1, 0.03, 0.255);
       headGroup.add(patch);
     } else if (fullMaskType === 'obito_mask') {
       const mask = new THREE.Mesh(
         new RoundedBoxGeometry(0.54, 0.52, 0.12, 4, 0.08),
         new THREE.MeshStandardMaterial({ color: '#ea580c', roughness: 0.4 }),
       );
-      mask.position.set(0, 0, -0.24);
+      mask.position.set(0, 0, 0.24);
       const hole = new THREE.Mesh(
         new THREE.CircleGeometry(0.05, 10),
         new THREE.MeshBasicMaterial({ color: '#09090b' }),
       );
-      hole.rotation.y = Math.PI;
-      hole.position.set(-0.09, 0.04, -0.305);
+      hole.position.set(0.09, 0.04, 0.305);
       headGroup.add(mask, hole);
     } else if (fullMaskType === 'grimmjow_jaw') {
       const jaw = new THREE.Mesh(
         new RoundedBoxGeometry(0.28, 0.16, 0.22, 3, 0.04),
         new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.35 }),
       );
-      jaw.position.set(-0.18, -0.14, -0.12);
+      jaw.position.set(0.18, -0.14, 0.12);
       headGroup.add(jaw);
     }
 
@@ -1482,7 +2168,11 @@ export function buildR15AvatarMesh(
             ? '#dc2626'
             : suit === 'ulquiorra'
               ? '#10b981'
-              : '#1e293b',
+              : suit === 'beerus'
+                ? '#f59e0b'
+                : suit === 'zeno'
+                  ? '#09090b'
+                  : '#1e293b',
     });
     const catchlightMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
 
@@ -1490,39 +2180,44 @@ export function buildR15AvatarMesh(
       [-0.1, 0.1].forEach((ex) => {
         if (fullMaskType === 'batman') {
           const cowlEye = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.042, 0.04), scleraMat);
-          cowlEye.position.set(ex, 0.04, -0.248);
+          cowlEye.position.set(ex, 0.04, 0.248);
           cowlEye.rotation.z = ex < 0 ? -0.16 : 0.16;
           headGroup.add(cowlEye);
         } else {
-          const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 10), scleraMat);
-          sclera.scale.set(0.95, 1.15, 0.55);
-          sclera.position.set(ex, 0.03, -0.235);
-          const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.036, 8, 8), irisMat);
-          pupil.scale.set(0.9, 1.05, 0.6);
-          pupil.position.set(ex, 0.03, -0.252);
-          const catchlight = new THREE.Mesh(new THREE.SphereGeometry(0.014, 6, 6), catchlightMat);
-          catchlight.position.set(ex - 0.015, 0.052, -0.266);
-          const brow = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.022, 0.025, 2, 0.01), hairMat);
-          brow.position.set(ex, 0.115, -0.245);
+          const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 10), scleraMat);
+          sclera.scale.set(0.96, 1.24, 0.54);
+          sclera.position.set(ex, 0.03, 0.235);
+          const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.042, 8, 8), irisMat);
+          pupil.scale.set(0.9, 1.12, 0.6);
+          pupil.position.set(ex, 0.028, 0.254);
+          const catchlight = new THREE.Mesh(new THREE.SphereGeometry(0.015, 6, 6), catchlightMat);
+          catchlight.position.set(ex + 0.016, 0.056, 0.268);
+          const upperLid = new THREE.Mesh(
+            new THREE.BoxGeometry(0.115, 0.022, 0.026),
+            new THREE.MeshBasicMaterial({ color: '#09090b' }),
+          );
+          upperLid.position.set(ex, 0.088, 0.252);
+          const brow = new THREE.Mesh(new RoundedBoxGeometry(0.105, 0.022, 0.025, 2, 0.01), hairMat);
+          brow.position.set(ex, 0.122, 0.246);
           brow.rotation.z = ex < 0 ? 0.08 : -0.08;
-          headGroup.add(sclera, pupil, catchlight, brow);
+          headGroup.add(sclera, pupil, catchlight, upperLid, brow);
           if (isFemale || suit === 'boa_hancock' || suit === 'nami' || suit === 'nico_robin' || suit === 'rukia' || suit === 'tsunade') {
-            const lash = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.016, 0.02), new THREE.MeshBasicMaterial({ color: '#09090b' }));
-            lash.position.set(ex + (ex < 0 ? -0.04 : 0.04), 0.068, -0.254);
+            const lash = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.018, 0.02), new THREE.MeshBasicMaterial({ color: '#09090b' }));
+            lash.position.set(ex + (ex < 0 ? -0.045 : 0.045), 0.072, 0.256);
             headGroup.add(lash);
           }
         }
       });
 
       if (fullMaskType !== 'kakashi') {
-        const nose = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), skinMat);
-        nose.position.set(0, -0.025, -0.26);
+        const nose = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), skinMat);
+        nose.position.set(0, -0.025, 0.262);
         const smile = new THREE.Mesh(
           new THREE.TorusGeometry(0.065, 0.014, 6, 12, Math.PI),
           new THREE.MeshBasicMaterial({ color: isFemale ? '#be123c' : '#9a3412' }),
         );
         smile.rotation.z = Math.PI;
-        smile.position.set(0, -0.09, -0.248);
+        smile.position.set(0, -0.09, 0.248);
         headGroup.add(nose, smile);
       }
     }
@@ -1534,14 +2229,14 @@ export function buildR15AvatarMesh(
         new THREE.MeshBasicMaterial({ color: '#6366f1' }),
       );
       diamond.scale.set(0.8, 1.3, 0.3);
-      diamond.position.set(0, 0.14, -0.256);
+      diamond.position.set(0, 0.14, 0.256);
       headGroup.add(diamond);
     }
     if (spec?.ulquiorraTears) {
       const tearMat = new THREE.MeshBasicMaterial({ color: '#10b981' });
       [-0.1, 0.1].forEach((tx) => {
         const tear = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.14, 0.02), tearMat);
-        tear.position.set(tx, -0.06, -0.254);
+        tear.position.set(tx, -0.06, 0.254);
         headGroup.add(tear);
       });
     }
@@ -1551,12 +2246,26 @@ export function buildR15AvatarMesh(
         new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.85 }),
       );
       beard.rotation.x = Math.PI;
-      beard.position.set(0, -0.26, -0.18);
+      beard.position.set(0, -0.26, 0.18);
       const cross1 = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.022, 0.02), new THREE.MeshBasicMaterial({ color: '#991b1b' }));
-      cross1.position.set(-0.08, 0.14, -0.256);
+      cross1.position.set(0.08, 0.14, 0.256);
       const cross2 = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.14, 0.02), new THREE.MeshBasicMaterial({ color: '#991b1b' }));
-      cross2.position.set(-0.08, 0.14, -0.256);
+      cross2.position.set(0.08, 0.14, 0.256);
       headGroup.add(beard, cross1, cross2);
+    }
+    if (spec?.hisokaMarks) {
+      const star = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.03, 0),
+        new THREE.MeshBasicMaterial({ color: '#ec4899' }),
+      );
+      star.scale.set(1, 1, 0.25);
+      star.position.set(-0.14, -0.04, 0.258);
+      const tear = new THREE.Mesh(
+        new THREE.ConeGeometry(0.025, 0.055, 6),
+        new THREE.MeshBasicMaterial({ color: '#38bdf8' }),
+      );
+      tear.position.set(0.14, -0.04, 0.258);
+      headGroup.add(star, tear);
     }
     if (spec?.snakeEarrings) {
       const goldMat = new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.85, roughness: 0.25 });
@@ -1568,40 +2277,90 @@ export function buildR15AvatarMesh(
     }
   }
 
-  // Hair rendering (both customized and costume override)
+  // Hair rendering (distinct front anime bangs on +Z and full rear hair coverage on -Z so zero skin shows behind)
   const effectiveHair = spec
     ? spec.hairMode || 'none'
     : cfg.hairStyle;
 
   if (effectiveHair !== 'none' && effectiveHair !== 'covered' && effectiveHair !== 'bald') {
-    if (effectiveHair === 'short' || effectiveHair === 'spiky' || effectiveHair === 'undercut' || effectiveHair === 'slick') {
+    // Full rear skull hair shell (-Z) covering entire back of head cleanly
+    if (effectiveHair !== 'hijab') {
+      const fullRearShell = new THREE.Mesh(
+        new RoundedBoxGeometry(0.55, 0.48, 0.17, 4, 0.08),
+        hairMat,
+      );
+      fullRearShell.position.set(0, 0.03, -0.2);
+      headGroup.add(fullRearShell);
+    }
+
+    if (
+      effectiveHair === 'short' ||
+      effectiveHair === 'spiky' ||
+      effectiveHair === 'gon_spiky' ||
+      effectiveHair === 'undercut' ||
+      effectiveHair === 'slick'
+    ) {
       const cap = new THREE.Mesh(new RoundedBoxGeometry(0.55, 0.22, 0.54, 4, 0.1), hairMat);
-      cap.position.set(0, 0.19, 0.01);
+      cap.position.set(0, 0.19, -0.01);
       headGroup.add(cap);
+      // Crisp anime front bangs (+Z)
+      if (effectiveHair !== 'slick') {
+        [-0.14, 0, 0.14].forEach((bx, bi) => {
+          const bang = new THREE.Mesh(new THREE.ConeGeometry(0.072, 0.15, 5), hairMat);
+          bang.rotation.x = Math.PI - 0.18;
+          bang.position.set(bx, 0.145 - (bi === 1 ? 0.015 : 0), 0.242);
+          headGroup.add(bang);
+        });
+      }
       if (effectiveHair !== 'undercut') {
-        const sideL = new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.18, 0.28, 2, 0.03), hairMat);
-        sideL.position.set(-0.25, 0.06, 0.05);
+        const sideL = new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.2, 0.28, 2, 0.03), hairMat);
+        sideL.position.set(-0.25, 0.05, -0.05);
         const sideR = sideL.clone();
         sideR.position.x = 0.25;
         headGroup.add(sideL, sideR);
       }
       if (effectiveHair === 'spiky') {
         for (let s = -2; s <= 2; s++) {
-          const spike = new THREE.Mesh(new THREE.ConeGeometry(0.078, 0.22, 6), hairMat);
-          spike.position.set(s * 0.088, 0.34, -0.04);
-          spike.rotation.x = -0.25;
+          const spike = new THREE.Mesh(new THREE.ConeGeometry(0.078, 0.24, 6), hairMat);
+          spike.position.set(s * 0.088, 0.35, 0.04);
+          spike.rotation.x = 0.25;
+          headGroup.add(spike);
+        }
+      } else if (effectiveHair === 'gon_spiky') {
+        for (let s = -2; s <= 2; s++) {
+          const spike = new THREE.Mesh(new THREE.ConeGeometry(0.095, 0.44 - Math.abs(s) * 0.06, 6), hairMat);
+          spike.position.set(s * 0.085, 0.42 - Math.abs(s) * 0.04, -0.01);
           headGroup.add(spike);
         }
       } else if (effectiveHair === 'slick') {
         const crest = new THREE.Mesh(new RoundedBoxGeometry(0.28, 0.12, 0.45, 3, 0.05), hairMat);
-        crest.position.set(0, 0.28, -0.02);
+        crest.position.set(0, 0.28, 0.02);
         headGroup.add(crest);
       }
+    } else if (effectiveHair === 'curly') {
+      const cap = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.22, 0.54, 4, 0.1), hairMat);
+      cap.position.set(0, 0.19, -0.02);
+      headGroup.add(cap);
+      const curlCoords: Array<[number, number, number]> = [
+        [-0.18, 0.26, 0.14],
+        [0, 0.28, 0.17],
+        [0.18, 0.26, 0.14],
+        [-0.24, 0.22, -0.02],
+        [0.24, 0.22, -0.02],
+        [-0.16, 0.26, -0.18],
+        [0, 0.27, -0.21],
+        [0.16, 0.26, -0.18],
+      ];
+      curlCoords.forEach(([cx, cy, cz]) => {
+        const curl = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 7), hairMat);
+        curl.position.set(cx, cy, cz);
+        headGroup.add(curl);
+      });
     } else if (effectiveHair === 'side_part' || effectiveHair === 'parted') {
       const crown = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.22, 0.55, 4, 0.1), hairMat);
-      crown.position.set(0, 0.19, 0.02);
+      crown.position.set(0, 0.19, -0.02);
       const bangL = new THREE.Mesh(new RoundedBoxGeometry(0.26, 0.15, 0.12, 3, 0.05), hairMat);
-      bangL.position.set(-0.13, 0.15, -0.22);
+      bangL.position.set(-0.13, 0.15, 0.22);
       bangL.rotation.z = 0.24;
       const bangR = bangL.clone();
       bangR.position.x = 0.13;
@@ -1615,34 +2374,65 @@ export function buildR15AvatarMesh(
       effectiveHair === 'bob'
     ) {
       const crown = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.24, 0.55, 4, 0.1), hairMat);
-      crown.position.set(0, 0.18, 0.02);
+      crown.position.set(0, 0.18, -0.02);
       const backHair = new THREE.Mesh(
-        new RoundedBoxGeometry(0.52, effectiveHair === 'bob' ? 0.28 : 0.46, 0.22, 4, 0.08),
+        new RoundedBoxGeometry(0.54, effectiveHair === 'bob' ? 0.32 : 0.52, 0.22, 4, 0.08),
         hairMat,
       );
-      backHair.position.set(0, -0.04, 0.2);
-      headGroup.add(crown, backHair);
+      backHair.position.set(0, -0.06, -0.2);
+      // Anime side-framing bangs (+Z)
+      const fBangL = new THREE.Mesh(new RoundedBoxGeometry(0.24, 0.13, 0.1, 3, 0.04), hairMat);
+      fBangL.position.set(-0.12, 0.16, 0.225);
+      fBangL.rotation.z = 0.2;
+      const fBangR = fBangL.clone();
+      fBangR.position.x = 0.12;
+      fBangR.rotation.z = -0.2;
+      headGroup.add(crown, backHair, fBangL, fBangR);
       if (effectiveHair === 'ponytail' || effectiveHair === 'long_tie') {
-        const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.34, 6, 8), hairMat);
-        tail.position.set(0, -0.06, 0.33);
-        tail.rotation.x = 0.38;
-        headGroup.add(tail);
+        const tieBand = new THREE.Mesh(
+          new THREE.TorusGeometry(0.095, 0.025, 6, 12),
+          new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.6 }),
+        );
+        tieBand.position.set(0, 0.08, -0.29);
+        const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.088, 0.38, 6, 8), hairMat);
+        tail.position.set(0, -0.06, -0.34);
+        tail.rotation.x = -0.4;
+        headGroup.add(tieBand, tail);
       }
     } else if (effectiveHair === 'twin_braids' || effectiveHair === 'twin_tails') {
       const crown = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.24, 0.55, 4, 0.1), hairMat);
-      crown.position.set(0, 0.18, 0.02);
-      headGroup.add(crown);
+      crown.position.set(0, 0.18, -0.02);
+      const fBangL = new THREE.Mesh(new RoundedBoxGeometry(0.24, 0.13, 0.1, 3, 0.04), hairMat);
+      fBangL.position.set(-0.12, 0.16, 0.225);
+      fBangL.rotation.z = 0.2;
+      const fBangR = fBangL.clone();
+      fBangR.position.x = 0.12;
+      fBangR.rotation.z = -0.2;
+      headGroup.add(crown, fBangL, fBangR);
       [-0.28, 0.28].forEach((bx) => {
         const braid = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.42, 6, 8), hairMat);
-        braid.position.set(bx, -0.08, 0.14);
+        braid.position.set(bx, -0.08, -0.14);
         braid.rotation.z = bx < 0 ? 0.18 : -0.18;
         headGroup.add(braid);
       });
+    } else if (effectiveHair === 'whis_tall') {
+      const cap = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.2, 0.52, 4, 0.1), hairMat);
+      cap.position.set(0, 0.2, -0.01);
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 0.44, 12), hairMat);
+      tower.position.set(0, 0.44, -0.01);
+      const peak = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.26, 12), hairMat);
+      peak.position.set(0, 0.76, -0.02);
+      peak.rotation.x = -0.15;
+      const sideL = new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.22, 0.26, 2, 0.03), hairMat);
+      sideL.position.set(-0.25, 0.06, -0.04);
+      const sideR = sideL.clone();
+      sideR.position.x = 0.25;
+      headGroup.add(cap, tower, peak, sideL, sideR);
     } else if (effectiveHair === 'hijab') {
       const wrap = new THREE.Mesh(new RoundedBoxGeometry(0.58, 0.58, 0.56, 5, 0.18), hairMat);
-      wrap.position.set(0, 0.02, 0.03);
+      wrap.position.set(0, 0.02, -0.03);
       const drape = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.36, 0.28, 14), hairMat);
-      drape.position.set(0, -0.28, 0.02);
+      drape.position.set(0, -0.28, -0.02);
       headGroup.add(wrap, drape);
     }
   }
@@ -1671,7 +2461,7 @@ export function buildR15AvatarMesh(
           new THREE.ConeGeometry(0.08, 0.42, 6),
           new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.7 }),
         );
-        plume.position.set(0.26, 0.42, 0.08);
+        plume.position.set(0.26, 0.42, -0.08);
         plume.rotation.z = -0.7;
         headGroup.add(plume);
       }
@@ -1685,13 +2475,13 @@ export function buildR15AvatarMesh(
       if (hg === 'horns') {
         [-0.24, 0.24].forEach((hx) => {
           const horn = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.38, 8), hornMat);
-          horn.position.set(hx, 0.32, -0.02);
+          horn.position.set(hx, 0.32, 0.02);
           horn.rotation.z = hx < 0 ? 0.65 : -0.65;
           headGroup.add(horn);
         });
       } else {
         const horn = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.22, 8), hornMat);
-        horn.position.set(-0.22, 0.28, -0.02);
+        horn.position.set(-0.22, 0.28, 0.02);
         horn.rotation.z = 0.45;
         headGroup.add(horn);
       }
@@ -1713,13 +2503,13 @@ export function buildR15AvatarMesh(
         new THREE.BoxGeometry(0.24, 0.07, 0.03),
         new THREE.MeshStandardMaterial({ color: '#cbd5e1', metalness: 0.85, roughness: 0.2 }),
       );
-      plate.position.set(0, 0.16, -0.265);
+      plate.position.set(0, 0.16, 0.265);
       headGroup.add(cloth, plate);
     } else if (hg === 'wing_helm') {
       const wingMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', metalness: 0.5, roughness: 0.3 });
       [-0.28, 0.28].forEach((wx) => {
         const wing = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.24, 4), wingMat);
-        wing.position.set(wx, 0.16, 0.02);
+        wing.position.set(wx, 0.16, -0.02);
         wing.rotation.z = wx < 0 ? 0.55 : -0.55;
         headGroup.add(wing);
       });
@@ -1739,19 +2529,63 @@ export function buildR15AvatarMesh(
         new THREE.BoxGeometry(0.42, 0.07, 0.05),
         new THREE.MeshStandardMaterial({ color: '#10b981', metalness: 0.6, roughness: 0.2 }),
       );
-      frame.position.set(0, 0.19, -0.26);
+      frame.position.set(0, 0.19, 0.26);
       headGroup.add(frame);
     } else if (hg === 'kenseikan') {
       const kMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.4 });
       [-0.08, 0.08].forEach((kx) => {
         const pin = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.2, 0.04), kMat);
-        pin.position.set(kx, 0.34, -0.02);
+        pin.position.set(kx, 0.34, 0.02);
         headGroup.add(pin);
+      });
+    } else if (hg === 'piccolo_turban') {
+      const turbanMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.8 });
+      const dome = new THREE.Mesh(new RoundedBoxGeometry(0.58, 0.26, 0.56, 4, 0.12), turbanMat);
+      dome.position.set(0, 0.24, -0.01);
+      const jewel = new THREE.Mesh(
+        new THREE.SphereGeometry(0.05, 8, 6),
+        new THREE.MeshStandardMaterial({ color: '#7e22ce', roughness: 0.3 }),
+      );
+      jewel.position.set(0, 0.22, 0.28);
+      headGroup.add(dome, jewel);
+    } else if (hg === 'leorio_glasses') {
+      const shadeMat = new THREE.MeshStandardMaterial({ color: '#09090b', metalness: 0.85, roughness: 0.15 });
+      [-0.1, 0.1].forEach((gx) => {
+        const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.03, 12), shadeMat);
+        lens.rotation.x = Math.PI / 2;
+        lens.position.set(gx, 0.03, 0.265);
+        headGroup.add(lens);
+      });
+      const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.02, 0.03), shadeMat);
+      bridge.position.set(0, 0.035, 0.265);
+      headGroup.add(bridge);
+    } else if (hg === 'beerus_ears') {
+      const outerEarMat = new THREE.MeshStandardMaterial({ color: '#a855f7', roughness: 0.55 });
+      const innerEarMat = new THREE.MeshStandardMaterial({ color: '#f472b6', roughness: 0.5 });
+      [-0.19, 0.19].forEach((ex) => {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.44, 6), outerEarMat);
+        ear.position.set(ex, 0.4, 0.01);
+        ear.rotation.z = ex < 0 ? 0.24 : -0.24;
+        const innerEar = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.28, 4), innerEarMat);
+        innerEar.position.set(ex * 1.02, 0.38, 0.068);
+        innerEar.rotation.z = ex < 0 ? 0.24 : -0.24;
+        headGroup.add(ear, innerEar);
+      });
+    } else if (hg === 'zeno_ears') {
+      const yellowEarMat = new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.42 });
+      const stripeMat = new THREE.MeshStandardMaterial({ color: '#6b21a8', roughness: 0.5 });
+      [-0.32, 0.32].forEach((ex) => {
+        const ear = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), yellowEarMat);
+        ear.scale.set(0.62, 1.05, 0.88);
+        ear.position.set(ex, 0.01, 0);
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.36, 0.18), stripeMat);
+        stripe.position.set(ex * 0.82, 0.03, 0.02);
+        headGroup.add(ear, stripe);
       });
     }
   }
 
-  // Luffy Gear 5 / God Halo behind shoulders
+  // Luffy Gear 5 / God Halo behind shoulders (-Z)
   if (spec?.haloColor) {
     const halo = new THREE.Mesh(
       new THREE.TorusGeometry(0.58, 0.055, 10, 24),
@@ -1762,21 +2596,21 @@ export function buildR15AvatarMesh(
         roughness: 0.6,
       }),
     );
-    halo.position.set(0, 0.6, 0.28);
+    halo.position.set(0, 0.6, -0.28);
     upperTorso.add(halo);
   }
 
-  // Eyeglasses (when open face & enabled)
+  // Eyeglasses (when open face & enabled, +Z front)
   if (cfg.glasses && (!fullMaskType || fullMaskType === 'kakashi')) {
     const frameMat = new THREE.MeshStandardMaterial({ color: '#09090b', metalness: 0.72, roughness: 0.2 });
     const lensMat = new THREE.MeshStandardMaterial({ color: '#111827', metalness: 0.9, roughness: 0.12 });
     [-0.1, 0.1].forEach((gx) => {
       const lens = new THREE.Mesh(new RoundedBoxGeometry(0.14, 0.09, 0.04, 2, 0.015), lensMat);
-      lens.position.set(gx, 0.03, -0.265);
+      lens.position.set(gx, 0.03, 0.265);
       headGroup.add(lens);
     });
     const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.025, 0.03), frameMat);
-    bridge.position.set(0, 0.04, -0.265);
+    bridge.position.set(0, 0.04, 0.265);
     headGroup.add(bridge);
   }
 
@@ -1800,10 +2634,10 @@ export function buildR15AvatarMesh(
   } else if (hat === 'baseball') {
     const capMat = new THREE.MeshStandardMaterial({ color: '#2563eb', roughness: 0.65 });
     const dome = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.22, 0.52, 4, 0.12), capMat);
-    dome.position.set(0, 0.22, 0.01);
+    dome.position.set(0, 0.22, -0.01);
     const visor = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.045, 0.3, 3, 0.02), capMat);
-    visor.position.set(0, 0.14, -0.32);
-    visor.rotation.x = 0.12;
+    visor.position.set(0, 0.14, 0.32);
+    visor.rotation.x = -0.1;
     headGroup.add(dome, visor);
   } else if (hat === 'beanie') {
     const knitMat = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.92 });
@@ -1824,15 +2658,15 @@ export function buildR15AvatarMesh(
     headGroup.add(band);
     const neckTowel = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.065, 8, 18), towelMat);
     neckTowel.rotation.x = Math.PI / 2;
-    neckTowel.position.set(0, 0.64, 0.02);
+    neckTowel.position.set(0, 0.64, -0.02);
     upperTorso.add(neckTowel);
   } else if (hat === 'bando') {
     const bandoMat = new THREE.MeshStandardMaterial({ color: '#ec4899', roughness: 0.55 });
     const band = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.032, 8, 20, Math.PI * 1.1), bandoMat);
-    band.position.set(0, 0.13, -0.02);
+    band.position.set(0, 0.13, 0.02);
     const bowL = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.12, 4), bandoMat);
     bowL.rotation.z = Math.PI / 2;
-    bowL.position.set(-0.07, 0.34, -0.04);
+    bowL.position.set(-0.07, 0.34, 0.04);
     const bowR = bowL.clone();
     bowR.rotation.z = -Math.PI / 2;
     bowR.position.x = 0.07;
@@ -1847,7 +2681,7 @@ export function buildR15AvatarMesh(
       new RoundedBoxGeometry(0.17, 0.11, 0.1, 2, 0.02),
       new THREE.MeshStandardMaterial({ color: '#0f172a', metalness: 0.4, roughness: 0.4 }),
     );
-    housing.position.set(0, 0.16, -0.28);
+    housing.position.set(0, 0.16, 0.28);
     headlampBulbMat = new THREE.MeshStandardMaterial({
       color: '#fef9c3',
       emissive: '#fde047',
@@ -1855,14 +2689,14 @@ export function buildR15AvatarMesh(
     });
     const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.04, 12), headlampBulbMat);
     lens.rotation.x = Math.PI / 2;
-    lens.position.set(0, 0.16, -0.33);
+    lens.position.set(0, 0.16, 0.33);
     headGroup.add(strap, housing, lens);
 
     if (options.withSpotLight) {
       headlampSpot = new THREE.SpotLight('#fef08a', 0, 58, Math.PI / 4.2, 0.45, 1.1);
-      headlampSpot.position.set(0, 0.16, -0.36);
+      headlampSpot.position.set(0, 0.16, 0.36);
       const spotTarget = new THREE.Object3D();
-      spotTarget.position.set(0, -1.8, -16);
+      spotTarget.position.set(0, -1.8, 16);
       headGroup.add(headlampSpot, spotTarget);
       headlampSpot.target = spotTarget;
     }
@@ -1874,18 +2708,18 @@ export function buildR15AvatarMesh(
   } else if (hat === 'blangkon') {
     const batikMat = new THREE.MeshStandardMaterial({ map: getBatikTexture(), roughness: 0.72 });
     const cap = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.22, 0.54, 4, 0.1), batikMat);
-    cap.position.set(0, 0.22, 0.01);
+    cap.position.set(0, 0.22, -0.01);
     const mondolan = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 10), batikMat);
-    mondolan.position.set(0, 0.13, 0.29);
+    mondolan.position.set(0, 0.13, -0.29);
     headGroup.add(cap, mondolan);
   }
 
   // 4-9. ARMS
-  const shoulderX = isFemale ? 0.44 : 0.49;
+  const shoulderX = isFemale ? 0.405 : 0.51;
   const buildR15Arm = (side: -1 | 1) => {
     const upper = new THREE.Group();
     upper.position.set(side * shoulderX, 0.56, 0);
-    const armW = isFemale ? 0.19 : 0.22;
+    const armW = isFemale ? 0.175 : 0.225;
     const upperMesh = new THREE.Mesh(new RoundedBoxGeometry(armW, 0.34, armW, 3, 0.065), armUpperMat);
     upperMesh.position.y = -0.14;
     upperMesh.castShadow = castShadow;
@@ -1942,7 +2776,7 @@ export function buildR15AvatarMesh(
         new THREE.MeshStandardMaterial({ color: shieldColor, metalness: 0.7, roughness: 0.28 }),
       );
       shield.rotation.z = Math.PI / 2;
-      shield.position.set(-0.14, -0.04, -0.06);
+      shield.position.set(-0.14, -0.04, 0.06);
       if (suit === 'captain_america') {
         const inner = new THREE.Mesh(
           new THREE.CylinderGeometry(0.24, 0.24, 0.058, 18),
@@ -1956,20 +2790,20 @@ export function buildR15AvatarMesh(
     } else if (wp === 'mjolnir') {
       const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.36, 8), darkGripMat);
       handle.rotation.x = Math.PI / 2;
-      handle.position.set(0, -0.06, -0.14);
+      handle.position.set(0, -0.06, 0.14);
       const head = new THREE.Mesh(new RoundedBoxGeometry(0.22, 0.2, 0.34, 2, 0.03), metalBladeMat);
-      head.position.set(0, -0.06, -0.32);
+      head.position.set(0, -0.06, 0.32);
       rightArmSet.hand.add(handle, head);
     } else if (wp === 'trident' || wp === 'spear' || wp === 'staff' || wp === 'clima_tact') {
       const staffColor =
         wp === 'trident' ? goldMat : wp === 'clima_tact' ? new THREE.MeshStandardMaterial({ color: '#38bdf8', metalness: 0.45 }) : new THREE.MeshStandardMaterial({ color: '#78350f', roughness: 0.7 });
       const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 1.85, 8), staffColor);
-      shaft.position.set(0, 0.25, -0.12);
+      shaft.position.set(0, 0.25, 0.12);
       rightArmSet.hand.add(shaft);
       if (wp === 'trident') {
         [-0.1, 0, 0.1].forEach((tx) => {
           const prong = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.22, 6), goldMat);
-          prong.position.set(tx, 1.24, -0.12);
+          prong.position.set(tx, 1.24, 0.12);
           rightArmSet.hand.add(prong);
         });
       }
@@ -1986,26 +2820,26 @@ export function buildR15AvatarMesh(
         new THREE.BoxGeometry(0.04, 0.07, suit === 'kenpachi' ? 1.35 : 1.05),
         bladeMat,
       );
-      blade.position.set(0, -0.06, -0.55);
+      blade.position.set(0, -0.06, 0.55);
       const guard = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.03), goldMat);
-      guard.position.set(0, -0.06, -0.12);
+      guard.position.set(0, -0.06, 0.12);
       rightArmSet.hand.add(blade, guard);
       if (wp === 'katana_3') {
         const blade2 = blade.clone();
         leftArmSet.hand.add(blade2);
         const hipSword = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.0, 6), darkGripMat);
         hipSword.rotation.x = Math.PI / 2;
-        hipSword.position.set(-0.36, 0.14, 0.12);
+        hipSword.position.set(-0.36, 0.14, -0.12);
         lowerTorso.add(hipSword);
       }
     } else if (wp === 'yoru') {
-      // Mihawk giant black greatsword strapped across back
+      // Mihawk giant black greatsword strapped across back (-Z)
       const yoruBlade = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.95, 0.04), darkGripMat);
       yoruBlade.rotation.z = 0.42;
-      yoruBlade.position.set(0, 0.35, 0.25);
+      yoruBlade.position.set(0, 0.35, -0.25);
       const crossGuard = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.1, 0.06), goldMat);
       crossGuard.rotation.z = 0.42;
-      crossGuard.position.set(-0.26, 0.94, 0.25);
+      crossGuard.position.set(-0.26, 0.94, -0.25);
       upperTorso.add(yoruBlade, crossGuard);
     } else if (wp === 'gunbai') {
       // Madara / Obito war fan
@@ -2014,15 +2848,15 @@ export function buildR15AvatarMesh(
         new THREE.MeshStandardMaterial({ color: '#991b1b', roughness: 0.5 }),
       );
       fanDisk.rotation.x = Math.PI / 2;
-      fanDisk.position.set(0, -0.04, -0.45);
+      fanDisk.position.set(0, -0.04, 0.45);
       const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.75, 6), darkGripMat);
       shaft.rotation.x = Math.PI / 2;
-      shaft.position.set(0, -0.04, -0.18);
+      shaft.position.set(0, -0.04, 0.18);
       rightArmSet.hand.add(fanDisk, shaft);
     } else if (wp === 'kanabo') {
       const club = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.04, 1.4, 8), darkGripMat);
       club.rotation.x = Math.PI / 2;
-      club.position.set(0, -0.06, -0.6);
+      club.position.set(0, -0.06, 0.6);
       rightArmSet.hand.add(club);
     } else if (wp === 'lightning_bolt') {
       const bolt = new THREE.Mesh(
@@ -2030,7 +2864,7 @@ export function buildR15AvatarMesh(
         new THREE.MeshBasicMaterial({ color: '#fde047' }),
       );
       bolt.scale.set(0.45, 2.2, 0.45);
-      bolt.position.set(0, 0.05, -0.14);
+      bolt.position.set(0, 0.05, 0.14);
       rightArmSet.hand.add(bolt);
     } else if (wp === 'fire_orb' || wp === 'rasengan') {
       const orbColor = wp === 'fire_orb' ? '#f97316' : '#38bdf8';
@@ -2038,17 +2872,59 @@ export function buildR15AvatarMesh(
         new THREE.SphereGeometry(0.16, 12, 10),
         new THREE.MeshBasicMaterial({ color: orbColor, transparent: true, opacity: 0.85 }),
       );
-      orb.position.set(0, -0.16, -0.12);
+      orb.position.set(0, -0.16, 0.12);
       rightArmSet.hand.add(orb);
+    } else if (wp === 'kurta_chains') {
+      const chainMat = new THREE.MeshStandardMaterial({ color: '#cbd5e1', metalness: 0.85, roughness: 0.25 });
+      for (let c = 0; c < 4; c++) {
+        const link = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.018, 6, 10), chainMat);
+        link.rotation.x = Math.PI / 2;
+        link.position.set(0, -0.02 - c * 0.045, 0);
+        rightArmSet.hand.add(link);
+      }
+      const dowsingBall = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.14, 6), chainMat);
+      dowsingBall.rotation.x = Math.PI;
+      dowsingBall.position.set(0, -0.24, 0.08);
+      rightArmSet.hand.add(dowsingBall);
+    } else if (wp === 'playing_card') {
+      const card = new THREE.Mesh(
+        new THREE.BoxGeometry(0.11, 0.16, 0.015),
+        new THREE.MeshBasicMaterial({ color: '#f8fafc' }),
+      );
+      card.position.set(0, -0.06, 0.16);
+      card.rotation.z = 0.25;
+      const mark = new THREE.Mesh(
+        new THREE.BoxGeometry(0.05, 0.05, 0.02),
+        new THREE.MeshBasicMaterial({ color: '#dc2626' }),
+      );
+      mark.position.copy(card.position);
+      rightArmSet.hand.add(card, mark);
+    } else if (wp === 'whis_staff') {
+      const staffShaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.025, 0.028, 1.58, 10),
+        new THREE.MeshStandardMaterial({ color: '#451a03', metalness: 0.35, roughness: 0.45 }),
+      );
+      staffShaft.position.set(0, 0.22, 0.14);
+      const collarRing = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.02, 8, 18), goldMat);
+      collarRing.rotation.x = Math.PI / 2;
+      collarRing.position.set(0, 1.06, 0.14);
+      const crystalOrb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.095, 12, 10),
+        new THREE.MeshBasicMaterial({ color: '#38bdf8' }),
+      );
+      crystalOrb.position.set(0, 1.06, 0.14);
+      const staffTopTip = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.14, 8), goldMat);
+      staffTopTip.position.set(0, 1.24, 0.14);
+      rightArmSet.hand.add(staffShaft, collarRing, crystalOrb, staffTopTip);
     }
   }
 
-  // 10-15. LEGS
-  const hipX = isFemale ? 0.17 : 0.19;
+  // 10-15. LEGS (Boot toes point +Z forward)
+  const hipX = isFemale ? 0.165 : 0.195;
   const buildR15Leg = (side: -1 | 1) => {
     const upper = new THREE.Group();
     upper.position.set(side * hipX, -0.02, 0);
-    const legW = isFemale ? 0.24 : 0.27;
+    const legW = isFemale ? 0.23 : 0.275;
     const thigh = new THREE.Mesh(new RoundedBoxGeometry(legW, 0.46, 0.27, 3, 0.08), legUpperMat);
     thigh.position.y = -0.21;
     thigh.castShadow = castShadow;
@@ -2064,12 +2940,16 @@ export function buildR15AvatarMesh(
 
     const foot = new THREE.Group();
     foot.position.set(0, -0.4, 0);
-    const bootUpper = new THREE.Mesh(new RoundedBoxGeometry(legW, 0.2, 0.37, 3, 0.06), bootMat);
-    bootUpper.position.set(0, -0.04, -0.05);
+    const bootUpper = new THREE.Mesh(new RoundedBoxGeometry(legW, 0.2, 0.39, 3, 0.06), bootMat);
+    bootUpper.position.set(0, -0.04, 0.06);
     bootUpper.castShadow = castShadow;
-    const sole = new THREE.Mesh(new RoundedBoxGeometry(legW + 0.015, 0.065, 0.4, 2, 0.02), soleMat);
-    sole.position.set(0, -0.128, -0.05);
-    foot.add(bootUpper, sole);
+    const toeCap = new THREE.Mesh(new RoundedBoxGeometry(legW - 0.02, 0.11, 0.12, 3, 0.04), bootMat);
+    toeCap.position.set(0, -0.07, 0.24);
+    const heelTab = new THREE.Mesh(new THREE.BoxGeometry(legW - 0.04, 0.13, 0.045), soleMat);
+    heelTab.position.set(0, -0.03, -0.14);
+    const sole = new THREE.Mesh(new RoundedBoxGeometry(legW + 0.015, 0.065, 0.43, 2, 0.02), soleMat);
+    sole.position.set(0, -0.128, 0.06);
+    foot.add(bootUpper, toeCap, heelTab, sole);
     lower.add(foot);
 
     lowerTorso.add(upper);
@@ -2079,7 +2959,7 @@ export function buildR15AvatarMesh(
   const leftLegSet = buildR15Leg(-1);
   const rightLegSet = buildR15Leg(1);
 
-  // Back Gear
+  // Back Gear (-Z Back)
   let capeUpper: THREE.Object3D | undefined;
   let capeLower: THREE.Object3D | undefined;
   let jetFlames: THREE.Object3D[] | undefined;
@@ -2089,18 +2969,32 @@ export function buildR15AvatarMesh(
   if (effectiveBackGear === 'carrier') {
     const packMat = new THREE.MeshStandardMaterial({ color: cfg.pack, roughness: 0.78 });
     const strapMat = new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.85 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: '#e2e8f0', roughness: 0.55 });
     const mainPack = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.64, 0.34, 4, 0.08), packMat);
-    mainPack.position.set(0, 0.34, 0.36);
+    mainPack.position.set(0, 0.34, -0.35);
     mainPack.castShadow = castShadow;
     const lid = new THREE.Mesh(new RoundedBoxGeometry(0.58, 0.16, 0.36, 3, 0.06), strapMat);
-    lid.position.set(0, 0.68, 0.36);
+    lid.position.set(0, 0.68, -0.35);
+    const backPouch = new THREE.Mesh(new RoundedBoxGeometry(0.4, 0.32, 0.08, 3, 0.03), strapMat);
+    backPouch.position.set(0, 0.28, -0.52);
+    const safetyStrip = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.05, 0.02), trimMat);
+    safetyStrip.position.set(0, 0.36, -0.56);
     const matRoll = new THREE.Mesh(
       new THREE.CylinderGeometry(0.11, 0.11, 0.6, 12),
       new THREE.MeshStandardMaterial({ color: '#f59e0b', roughness: 0.8 }),
     );
     matRoll.rotation.z = Math.PI / 2;
-    matRoll.position.set(0, 0.82, 0.36);
-    upperTorso.add(mainPack, lid, matRoll);
+    matRoll.position.set(0, 0.82, -0.35);
+    upperTorso.add(mainPack, lid, backPouch, safetyStrip, matRoll);
+
+    // 3D Shoulder Straps wrapping over shoulders from front chest (+Z) to rear backpack (-Z)
+    [-0.19, 0.19].forEach((sx) => {
+      const frontStrap = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.56, 0.035), strapMat);
+      frontStrap.position.set(sx, 0.35, chestD * 0.5 + 0.016);
+      const topStrap = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.04, chestD + 0.12), strapMat);
+      topStrap.position.set(sx, 0.635, -0.04);
+      upperTorso.add(frontStrap, topStrap);
+    });
   } else if (effectiveBackGear === 'cape') {
     const capeColor = spec?.capeColor || '#dc2626';
     const capeMat = new THREE.MeshStandardMaterial({
@@ -2109,16 +3003,16 @@ export function buildR15AvatarMesh(
       side: THREE.DoubleSide,
     });
     const capeRoot = new THREE.Group();
-    capeRoot.position.set(0, 0.6, 0.22);
+    capeRoot.position.set(0, 0.6, -0.22);
     const upperPanel = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.62, 0.045), capeMat);
-    upperPanel.position.set(0, -0.31, 0.05);
-    upperPanel.rotation.x = 0.14;
+    upperPanel.position.set(0, -0.31, -0.05);
+    upperPanel.rotation.x = -0.14;
     capeRoot.add(upperPanel);
 
     const lowerPivot = new THREE.Group();
-    lowerPivot.position.set(0, -0.6, 0.09);
+    lowerPivot.position.set(0, -0.6, -0.09);
     const lowerPanel = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.65, 0.045), capeMat);
-    lowerPanel.position.set(0, -0.32, 0.04);
+    lowerPanel.position.set(0, -0.32, -0.04);
     lowerPivot.add(lowerPanel);
     capeRoot.add(lowerPivot);
 
@@ -2134,14 +3028,14 @@ export function buildR15AvatarMesh(
     });
     [-1, 1].forEach((side) => {
       const wing = new THREE.Group();
-      wing.position.set(side * 0.14, 0.48, 0.22);
-      wing.rotation.y = side * -0.4;
+      wing.position.set(side * 0.14, 0.48, -0.22);
+      wing.rotation.y = side * 0.4;
       for (let f = 0; f < 3; f++) {
         const feather = new THREE.Mesh(
           new RoundedBoxGeometry(0.72 - f * 0.14, 0.18, 0.06, 2, 0.03),
           wingMat,
         );
-        feather.position.set(side * (0.42 - f * 0.06), 0.18 - f * 0.2, 0.06);
+        feather.position.set(side * (0.42 - f * 0.06), 0.18 - f * 0.2, -0.06);
         feather.rotation.z = side * (0.28 - f * 0.2);
         wing.add(feather);
       }
@@ -2155,14 +3049,14 @@ export function buildR15AvatarMesh(
     jetFlames = [];
     [-0.17, 0.17].forEach((jx) => {
       const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.56, 12), metalMat);
-      tank.position.set(jx, 0.36, 0.34);
+      tank.position.set(jx, 0.36, -0.34);
       const cap = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), tankMat);
-      cap.position.set(jx, 0.64, 0.34);
+      cap.position.set(jx, 0.64, -0.34);
       const nozzle = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.14, 10), nozzleMat);
-      nozzle.position.set(jx, 0.04, 0.34);
+      nozzle.position.set(jx, 0.04, -0.34);
       const flame = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.28, 8), flameMat);
       flame.rotation.x = Math.PI;
-      flame.position.set(jx, -0.14, 0.34);
+      flame.position.set(jx, -0.14, -0.34);
       upperTorso.add(tank, cap, nozzle, flame);
       jetFlames?.push(flame);
     });
@@ -2334,8 +3228,8 @@ export function animateR15AvatarPose(
 
   // Hurt / Knockback
   if (poseState === 'hurt') {
-    rig.lowerTorso.rotation.x = 0.42;
-    rig.upperTorso.rotation.x = 0.25;
+    rig.lowerTorso.rotation.x = -0.38;
+    rig.upperTorso.rotation.x = -0.22;
     rig.leftUpperArm.rotation.z = -1.3;
     rig.rightUpperArm.rotation.z = 1.3;
     rig.leftLowerArm.rotation.x = -0.6;
@@ -2349,7 +3243,7 @@ export function animateR15AvatarPose(
   // Ladder Climbing Pose
   if (poseState === 'climb') {
     const c = Math.sin(walkPhase * 1.15);
-    rig.upperTorso.rotation.x = -0.08;
+    rig.upperTorso.rotation.x = 0.08;
     rig.leftUpperArm.rotation.x = -2.1 + c * 0.55;
     rig.leftLowerArm.rotation.x = -0.65;
     rig.rightUpperArm.rotation.x = -2.1 - c * 0.55;
@@ -2364,7 +3258,7 @@ export function animateR15AvatarPose(
   // Mountain Slide Pose (Crouched surf stance)
   if (poseState === 'slide') {
     rig.lowerTorso.position.y = 0.66;
-    rig.lowerTorso.rotation.x = 0.28;
+    rig.lowerTorso.rotation.x = -0.22;
     rig.upperTorso.rotation.x = 0.16;
     rig.leftUpperLeg.rotation.x = -1.1;
     rig.leftLowerLeg.rotation.x = 0.95;
@@ -2379,7 +3273,7 @@ export function animateR15AvatarPose(
 
   // Mid-air Jump Pose
   if (poseState === 'jump' || !onGround) {
-    rig.upperTorso.rotation.x = -0.1;
+    rig.upperTorso.rotation.x = 0.1;
     rig.leftUpperLeg.rotation.x = -0.58;
     rig.leftLowerLeg.rotation.x = 0.82;
     rig.rightUpperLeg.rotation.x = -0.22;
@@ -2393,13 +3287,13 @@ export function animateR15AvatarPose(
     return;
   }
 
-  // Articulated Walking / Uphill Running Cycle
+  // Articulated Walking / Uphill Running Cycle (+Z forward)
   if (poseState === 'walk' || isMoving) {
     const s = Math.sin(walkPhase);
     const c = Math.cos(walkPhase);
     rig.lowerTorso.position.y = 1.02 + Math.abs(c) * 0.055;
     rig.lowerTorso.rotation.y = s * 0.09;
-    rig.upperTorso.rotation.x = -0.1;
+    rig.upperTorso.rotation.x = 0.1;
     rig.upperTorso.rotation.y = -s * 0.1;
     rig.leftUpperLeg.rotation.x = s * 0.62;
     rig.leftLowerLeg.rotation.x = Math.max(0.08, -s * 0.68 + 0.24);
@@ -2436,7 +3330,7 @@ export function animateR15AvatarPose(
     rig.upperTorso.rotation.z = Math.sin(elapsed * 26) * 0.08;
     rig.headGroup.rotation.y = Math.sin(elapsed * 18) * 0.15;
   } else if (activeEmote === 'laugh') {
-    rig.upperTorso.rotation.x = -0.2 + Math.sin(elapsed * 15) * 0.1;
+    rig.upperTorso.rotation.x = 0.2 + Math.sin(elapsed * 15) * 0.1;
     rig.leftLowerArm.rotation.x = -1.0;
     rig.rightLowerArm.rotation.x = -1.0;
     rig.bodyRig.position.y = Math.abs(Math.sin(elapsed * 15)) * 0.06;

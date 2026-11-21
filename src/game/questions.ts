@@ -77,26 +77,411 @@ export function normalizeEssayText(raw: string): string {
   return String(raw || '')
     .trim()
     .toLowerCase()
-    .replace(/[.,!?;:"'`()\[\]{}]/g, ' ')
+    .replace(/(\d),(\d)/g, '$1.$2')
+    .replace(/[.,!?;:"'`()\[\]{}…\\/_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+const ESSAY_FILLER_WORDS = new Set([
+  'adalah',
+  'yaitu',
+  'yakni',
+  'ialah',
+  'merupakan',
+  'sebuah',
+  'suatu',
+  'seorang',
+  'sang',
+  'si',
+  'para',
+  'itu',
+  'ini',
+  'tersebut',
+  'yang',
+  'bernama',
+  'disebut',
+  'dinamakan',
+  'artinya',
+  'maksudnya',
+  'dengan',
+  'pada',
+  'untuk',
+  'oleh',
+  'di',
+  'ke',
+  'dari',
+  'dan',
+  'atau',
+  'serta',
+  'juga',
+  'dapat',
+  'bisa',
+  'dalam',
+  'sebagai',
+  'secara',
+  'tentang',
+  'mengenai',
+  'the',
+  'a',
+  'an',
+  'is',
+  'are',
+  'was',
+  'were',
+  'of',
+  'to',
+  'in',
+  'for',
+  'and',
+  'or',
+  'by',
+  'with',
+  'that',
+  'this',
+  'as',
+  'it',
+]);
+
+// Bidirectional English-Indonesian synonym & domain equivalence groups
+// (focused on computer networking/ICT & common academic concepts)
+const SEMANTIC_SYNONYM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
+  ['city', 'kota', 'perkotaan'],
+  ['local', 'lokal', 'setempat'],
+  ['wide', 'luas', 'lebar'],
+  ['star', 'bintang'],
+  ['bus', 'jalur lurus', 'linier', 'linear'],
+  ['ring', 'cincin', 'lingkaran', 'melingkar'],
+  ['tree', 'pohon', 'bercabang', 'hierarki'],
+  ['mesh', 'jala', 'jaring'],
+  ['wireless', 'nirkabel', 'tanpa kabel'],
+  ['cable', 'kabel', 'berkabel', 'wired'],
+  ['server', 'peladen', 'pusat', 'induk'],
+  ['client', 'klien', 'pengguna'],
+  ['storage', 'penyimpanan', 'simpan', 'media simpan'],
+  ['security', 'keamanan', 'pengamanan', 'proteksi'],
+  ['speed', 'kecepatan', 'laju'],
+  ['router', 'ruter', 'penghubung jaringan', 'pengarah jaringan'],
+  ['switch', 'penghubung', 'saklar'],
+  ['address', 'alamat'],
+  ['domain', 'nama domain'],
+  ['network', 'jaringan'],
+  ['topology', 'topologi'],
+  ['protocol', 'protokol'],
+  ['computer', 'komputer'],
+  ['hardware', 'perangkat keras'],
+  ['software', 'perangkat lunak', 'aplikasi'],
+  ['input', 'masukan'],
+  ['output', 'keluaran'],
+  ['upload', 'unggah'],
+  ['download', 'unduh'],
+  ['browser', 'peramban'],
+  ['bandwidth', 'lebar pita'],
+  ['firewall', 'dinding api'],
+  ['cloud', 'awan', 'komputasi awan'],
+  ['ocean', 'samudra', 'samudera', 'lautan'],
+  ['pacific', 'pasifik'],
+  ['soekarno', 'sukarno', 'bung karno'],
+];
+
+const SYNONYM_LOOKUP: Map<string, Set<string>> = (() => {
+  const map = new Map<string, Set<string>>();
+  for (const group of SEMANTIC_SYNONYM_GROUPS) {
+    const groupSet = new Set(group);
+    for (const term of group) {
+      let existing = map.get(term);
+      if (!existing) {
+        existing = new Set<string>();
+        map.set(term, existing);
+      }
+      for (const peer of groupSet) {
+        existing.add(peer);
+      }
+    }
+  }
+  return map;
+})();
+
+const MULTI_WORD_SYNONYMS: ReadonlyArray<string> = Array.from(SYNONYM_LOOKUP.keys())
+  .filter((t) => t.includes(' '))
+  .sort((a, b) => b.length - a.length);
+
+function stripEssayFillerWords(normalized: string): string {
+  const tokens = normalized.split(' ').filter((w) => w && !ESSAY_FILLER_WORDS.has(w));
+  return tokens.length > 0 ? tokens.join(' ') : normalized;
+}
+
+function lightStemWord(word: string): string {
+  if (word.length <= 5) return word;
+  let w = word;
+  const prefixes = ['meng', 'meny', 'men', 'mem', 'me', 'peng', 'peny', 'pen', 'pem', 'ber', 'ter', 'per', 'di', 'ke'];
+  for (const p of prefixes) {
+    if (w.startsWith(p) && w.length - p.length >= 4) {
+      w = w.slice(p.length);
+      break;
+    }
+  }
+  const suffixes = ['nya', 'kan', 'lah', 'kah', 'an', 'i'];
+  for (const s of suffixes) {
+    if (w.endsWith(s) && w.length - s.length >= 4) {
+      w = w.slice(0, w.length - s.length);
+      break;
+    }
+  }
+  return w;
+}
+
+function lightStemPhrase(normalized: string): string {
+  return normalized
+    .split(' ')
+    .filter(Boolean)
+    .map(lightStemWord)
+    .join(' ');
+}
+
+function extractNumericTokens(raw: string): string[] {
+  const normalizedDecimal = String(raw || '').trim().toLowerCase().replace(/(\d),(\d)/g, '$1.$2');
+  const matches = normalizedDecimal.match(/\d+(?:\.\d+)*/g);
+  return matches ? matches : [];
+}
+
+function damerauLevenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let val = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost,
+      );
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        val = Math.min(val, dp[i - 2][j - 2] + 1);
+      }
+      dp[i][j] = val;
+    }
+  }
+  return dp[m][n];
+}
+
+function stringSimilarity(a: string, b: string): number {
+  if (!a && !b) return 1;
+  if (!a || !b) return 0;
+  const maxLen = Math.max(a.length, b.length);
+  return 1 - damerauLevenshtein(a, b) / maxLen;
+}
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsWholePhrase(haystack: string, needle: string): boolean {
+  if (!haystack || !needle) return false;
+  const re = new RegExp(`(?:^|\\s)${escapeRegExp(needle)}(?:$|\\s)`);
+  return re.test(haystack);
+}
+
+function replaceWholePhrase(haystack: string, needle: string, replacement: string): string {
+  const re = new RegExp(`(^|\\s)${escapeRegExp(needle)}(?=$|\\s)`, 'g');
+  return haystack.replace(re, `$1${replacement}`).replace(/\s+/g, ' ').trim();
+}
+
+function expandSemanticVariants(phrase: string): string[] {
+  const variants = new Set<string>([phrase]);
+  const directPeers = SYNONYM_LOOKUP.get(phrase);
+  if (directPeers) {
+    for (const peer of directPeers) {
+      variants.add(peer);
+    }
+  }
+
+  // Expand multi-word synonym occurrences inside longer phrases (e.g. "tanpa kabel" <-> "wireless")
+  for (const multi of MULTI_WORD_SYNONYMS) {
+    if (containsWholePhrase(phrase, multi)) {
+      const peers = SYNONYM_LOOKUP.get(multi);
+      if (peers) {
+        for (const peer of peers) {
+          variants.add(replaceWholePhrase(phrase, multi, peer));
+        }
+      }
+    }
+  }
+
+  // Expand single-word synonym replacements inside multi-word phrases
+  const tokens = phrase.split(' ').filter(Boolean);
+  if (tokens.length >= 2) {
+    for (let i = 0; i < tokens.length; i++) {
+      const peers = SYNONYM_LOOKUP.get(tokens[i]);
+      if (!peers) continue;
+      for (const peer of peers) {
+        const nextTokens = [...tokens];
+        nextTokens[i] = peer;
+        variants.add(nextTokens.join(' '));
+      }
+    }
+  }
+
+  return Array.from(variants);
+}
+
+function areTokensSemanticallyEquivalent(tokA: string, tokB: string): boolean {
+  if (!tokA || !tokB) return false;
+  if (tokA === tokB) return true;
+
+  const stemA = lightStemWord(tokA);
+  const stemB = lightStemWord(tokB);
+  if (stemA === stemB) return true;
+
+  // Check bidirectional synonym sets (including stem matches inside synonym group)
+  const peersA = SYNONYM_LOOKUP.get(tokA) || SYNONYM_LOOKUP.get(stemA);
+  if (peersA && (peersA.has(tokB) || peersA.has(stemB))) {
+    return true;
+  }
+  const peersB = SYNONYM_LOOKUP.get(tokB) || SYNONYM_LOOKUP.get(stemB);
+  if (peersB && (peersB.has(tokA) || peersB.has(stemA))) {
+    return true;
+  }
+
+  // Fuzzy similarity >= 70% for words >= 3 chars (prevents 1-2 char accidental matches)
+  if (tokA.length >= 3 && tokB.length >= 3) {
+    if (stringSimilarity(tokA, tokB) >= 0.7 || stringSimilarity(stemA, stemB) >= 0.7) {
+      return true;
+    }
+    if (peersA) {
+      for (const peer of peersA) {
+        if (!peer.includes(' ') && peer.length >= 3 && stringSimilarity(tokB, peer) >= 0.75) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 export function splitAcceptedKeys(rawKey: string): string[] {
   return String(rawKey || '')
-    .split(/[\/;]+/)
+    .split(/(?<!\d),(?!\d)|[\/;]+/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
 
+function matchesSingleEssayKey(rawStudent: string, rawKeyCandidate: string): boolean {
+  const cleanStudent = normalizeEssayText(rawStudent);
+  const cleanKey = normalizeEssayText(rawKeyCandidate);
+  if (!cleanStudent || !cleanKey) return false;
+
+  // 1. Numeric guard: if the answer key contains numbers/units/IPs (e.g. "192.168.1.1" or "8 bit"),
+  // ensure the main numeric tokens match strictly so arithmetic/IP questions aren't misgraded.
+  const keyNums = extractNumericTokens(rawKeyCandidate);
+  if (keyNums.length > 0) {
+    const stuNums = extractNumericTokens(rawStudent);
+    if (
+      keyNums.length !== stuNums.length ||
+      !keyNums.every((num, idx) => num === stuNums[idx])
+    ) {
+      return false;
+    }
+  }
+
+  // 2. Exact match after punctuation & whitespace normalization
+  if (cleanStudent === cleanKey) return true;
+
+  // 3. Filler/article-stripped core form
+  const coreStudent = stripEssayFillerWords(cleanStudent);
+  const coreKey = stripEssayFillerWords(cleanKey);
+  if (coreStudent === coreKey) return true;
+
+  // 4. Semantic synonym & translation phrase expansion (e.g. "city" <-> "kota", "wireless" <-> "tanpa kabel")
+  const stuVariants = new Set([
+    ...expandSemanticVariants(cleanStudent),
+    ...expandSemanticVariants(coreStudent),
+  ]);
+  const keyVariants = new Set([
+    ...expandSemanticVariants(cleanKey),
+    ...expandSemanticVariants(coreKey),
+  ]);
+
+  for (const sv of stuVariants) {
+    const svCompact = sv.replace(/\s+/g, '');
+    for (const kv of keyVariants) {
+      if (sv === kv || svCompact === kv.replace(/\s+/g, '')) {
+        return true;
+      }
+      // Phrase containment across variants (e.g. key "star" inside "topologi bintang")
+      if (kv.length >= 2 && containsWholePhrase(sv, kv)) {
+        return true;
+      }
+      // Damerau-Levenshtein similarity >= 70% across semantic variants & stems
+      if (kv.length >= 3 && sv.length >= 3) {
+        if (
+          stringSimilarity(sv, kv) >= 0.7 ||
+          stringSimilarity(svCompact, kv.replace(/\s+/g, '')) >= 0.7 ||
+          stringSimilarity(lightStemPhrase(sv), lightStemPhrase(kv)) >= 0.7
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 5. Partial & Core Keyword Coverage (for multi-word keys / definitions):
+  // Check across best semantic phrase variant pair
+  for (const sv of stuVariants) {
+    const stuTokens = stripEssayFillerWords(sv).split(' ').filter(Boolean);
+    for (const kv of keyVariants) {
+      const keyTokens = stripEssayFillerWords(kv).split(' ').filter(Boolean);
+      if (keyTokens.length === 0 || stuTokens.length === 0) continue;
+
+      let matchedKeyTokens = 0;
+      for (const kt of keyTokens) {
+        if (stuTokens.some((st) => areTokensSemanticallyEquivalent(kt, st))) {
+          matchedKeyTokens++;
+        }
+      }
+
+      // If key has >= 3 core keywords (sentence/definition), accept >= 60% keyword coverage
+      if (keyTokens.length >= 3 && matchedKeyTokens / keyTokens.length >= 0.6) {
+        return true;
+      }
+      // If key has 2 core words (e.g. "topologi bintang", "samudra pasifik", "nama domain"),
+      // accept if both matched OR student answered the distinguishing core term (last token, e.g. "star")
+      if (keyTokens.length === 2) {
+        if (matchedKeyTokens === 2) return true;
+        const coreLast = keyTokens[1];
+        if (
+          coreLast.length >= 3 &&
+          stuTokens.some((st) => areTokensSemanticallyEquivalent(coreLast, st))
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 export function evaluateEssayAnswer(studentInput: string, acceptedAnswers: string[]): boolean {
-  const cleanStudent = normalizeEssayText(studentInput);
-  if (!cleanStudent) return false;
-  return acceptedAnswers.some((k) => {
-    const cleanKey = normalizeEssayText(k);
-    if (!cleanKey) return false;
-    return cleanStudent === cleanKey;
-  });
+  if (!String(studentInput || '').trim()) return false;
+  const expandedKeys: string[] = [];
+  for (const k of acceptedAnswers) {
+    const parts = splitAcceptedKeys(k);
+    if (parts.length > 0) {
+      expandedKeys.push(...parts);
+    } else if (String(k || '').trim()) {
+      expandedKeys.push(k);
+    }
+  }
+  return expandedKeys.some((candidate) => matchesSingleEssayKey(studentInput, candidate));
 }
 
 export function computeFinalGrade(

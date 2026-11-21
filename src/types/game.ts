@@ -99,7 +99,23 @@ export type CharacterCostumeId =
   | 'toshiro'
   | 'byakuya'
   | 'rukia'
-  | 'yamamoto';
+  | 'yamamoto'
+  // Anime: Dragon Ball (9)
+  | 'goku'
+  | 'goku_ssj'
+  | 'vegeta'
+  | 'gohan'
+  | 'piccolo'
+  | 'trunks'
+  | 'beerus'
+  | 'whis'
+  | 'zeno'
+  // Anime: Hunter x Hunter (5)
+  | 'gon'
+  | 'killua'
+  | 'kurapika'
+  | 'leorio'
+  | 'hisoka';
 
 export type SuperheroSuitType = CharacterCostumeId;
 export type HatType = HeadAccessoryType | 'headband' | 'helmet' | 'crown';
@@ -109,6 +125,7 @@ export type HairStyle =
   | 'side_part'
   | 'spiky'
   | 'undercut'
+  | 'curly'
   | 'long_loose'
   | 'ponytail'
   | 'twin_braids'
@@ -123,6 +140,10 @@ export type EmoteType = 'wave' | 'celebrate' | 'cheer' | 'scared' | 'laugh' | 's
 export type RespawnMode = 'last_cp' | 'prev_cp' | 'base_camp';
 export type RoomStatus = 'waiting' | 'started' | 'ended';
 export type DisasterEventType =
+  | 'hail'
+  | 'fire_rain'
+  | 'heavy_rain'
+  | 'thick_fog'
   | 'landslide'
   | 'kuntilanak'
   | 'pocong'
@@ -131,6 +152,14 @@ export type DisasterEventType =
   | 'wildfire'
   | 'meteor'
   | 'wildlife';
+
+export interface TriggerDisasterPayload {
+  type: DisasterEventType;
+  duration: number;
+  timestamp: number;
+  count?: number;
+  offsets?: number[];
+}
 
 export interface AvatarConfig {
   gender: GenderType;

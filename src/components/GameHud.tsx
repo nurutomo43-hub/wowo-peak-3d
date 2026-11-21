@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -27,6 +27,7 @@ import {
   Play,
   RotateCcw,
   Smile,
+  Snowflake,
   Sparkles,
   Trophy,
   Upload,
@@ -178,7 +179,12 @@ export const GameHud: React.FC<GameHudProps> = ({
   onBuildStandaloneLink,
   onFinishStandalone,
 }) => {
-  const [controlsOpen, setControlsOpen] = useState(true);
+  const [isCompactMobile, setIsCompactMobile] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 900 || window.innerHeight < 500 : false,
+  );
+  const [controlsOpen, setControlsOpen] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? !(window.innerWidth < 900 || window.innerHeight < 500) : true,
+  );
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedStandalone, setCopiedStandalone] = useState(false);
   const [teleportTarget, setTeleportTarget] = useState(0);
@@ -187,6 +193,9 @@ export const GameHud: React.FC<GameHudProps> = ({
   const [emoteMenuOpen, setEmoteMenuOpen] = useState(false);
   const [avatarModalOpen, setAvatarModalOpen] = useState(false);
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
+  const [rosterSearch, setRosterSearch] = useState('');
+  const [rosterSort, setRosterSort] = useState<'score' | 'cp' | 'name'>('score');
+  const [rosterPage, setRosterPage] = useState(1);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
   const [excelStatus, setExcelStatus] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [draftAvatar, setDraftAvatar] = useState<AvatarConfig>(avatar);
@@ -194,7 +203,22 @@ export const GameHud: React.FC<GameHudProps> = ({
   const excelInputRef = useRef<HTMLInputElement | null>(null);
   const essayExcelInputRef = useRef<HTMLInputElement | null>(null);
   const joyZoneRef = useRef<HTMLDivElement | null>(null);
+  const activeJoyTouchIdRef = useRef<number | null>(null);
+  const lastTouchJumpAtRef = useRef<number>(0);
   const [knobOffset, setKnobOffset] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const updateViewport = () => {
+      setIsCompactMobile(window.innerWidth < 900 || window.innerHeight < 500);
+    };
+    updateViewport();
+    window.addEventListener('resize', updateViewport);
+    window.addEventListener('orientationchange', updateViewport);
+    return () => {
+      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('orientationchange', updateViewport);
+    };
+  }, []);
 
   const levelInfo = DIFFICULTY_LEVELS[settings.difficultyLevel] || DIFFICULTY_LEVELS[3];
   const safeRem = Math.max(0, Math.floor(remainingSec));
@@ -283,15 +307,14 @@ export const GameHud: React.FC<GameHudProps> = ({
     }
   };
 
-  const handleJoyMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    const touch = e.touches[0];
+  const updateJoyFromPoint = (clientX: number, clientY: number) => {
     const rect = joyZoneRef.current?.getBoundingClientRect();
-    if (!touch || !rect) return;
+    if (!rect) return;
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
-    let dx = touch.clientX - cx;
-    let dy = touch.clientY - cy;
-    const maxR = 38;
+    let dx = clientX - cx;
+    let dy = clientY - cy;
+    const maxR = Math.max(24, rect.width * 0.4);
     const dist = Math.hypot(dx, dy);
     if (dist > maxR) {
       dx = (dx / dist) * maxR;
@@ -301,203 +324,317 @@ export const GameHud: React.FC<GameHudProps> = ({
     onJoystickChange(dx / maxR, dy / maxR);
   };
 
-  const handleJoyEnd = () => {
+  const handleJoyStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (activeJoyTouchIdRef.current !== null) return;
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    activeJoyTouchIdRef.current = touch.identifier;
+    updateJoyFromPoint(touch.clientX, touch.clientY);
+  };
+
+  const handleJoyMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const activeId = activeJoyTouchIdRef.current;
+    const touch =
+      activeId !== null
+        ? Array.from(e.touches).find((t) => t.identifier === activeId) ||
+          Array.from(e.changedTouches).find((t) => t.identifier === activeId)
+        : e.touches[0];
+    if (!touch) return;
+    updateJoyFromPoint(touch.clientX, touch.clientY);
+  };
+
+  const handleJoyEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const activeId = activeJoyTouchIdRef.current;
+    if (activeId !== null) {
+      const endedThisFinger = Array.from(e.changedTouches).some((t) => t.identifier === activeId);
+      if (!endedThisFinger) return;
+    }
+    activeJoyTouchIdRef.current = null;
     setKnobOffset({ x: 0, y: 0 });
     onJoystickChange(0, 0);
   };
 
   return (
-    <div className="fixed inset-0 z-20 pointer-events-none">
+    <div className="fixed inset-0 z-20 pointer-events-none select-none">
       {/* TOP HEADER BAR */}
-      <header className="fixed top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-3 px-3.5 py-2 rounded-xl bg-slate-950/88 border border-white/15 shadow-lg pointer-events-auto">
-        <div className="flex items-center gap-3 min-w-0 flex-wrap">
-          <div className="flex items-center gap-2 shrink-0">
-            <Mountain className="w-4 h-4 text-amber-400 shrink-0" />
-            <span className="font-display text-base sm:text-lg font-extrabold tracking-wide text-white whitespace-nowrap">
+      {isCompactMobile ? (
+        <header
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className="fixed top-1.5 left-1.5 right-1.5 flex items-center justify-between gap-2 px-2.5 py-1 rounded-lg bg-slate-950/90 border border-white/15 shadow-lg pointer-events-auto touch-none text-xs overflow-hidden"
+        >
+          <div className="flex items-center gap-1.5 min-w-0 truncate">
+            <Mountain className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="font-display text-xs font-extrabold tracking-wide text-white whitespace-nowrap">
               WOWO PEAK
             </span>
-          </div>
-
-          <span className="text-slate-600 hidden sm:inline">|</span>
-
-          <div className="flex items-center gap-2 text-xs text-slate-300 truncate">
-            <span>
-              Ruang <strong className="font-mono-num text-white">{roomCode}</strong>
+            <span className="text-slate-500">·</span>
+            <span className="font-mono-num text-xs font-semibold text-slate-200 whitespace-nowrap">
+              #{roomCode}
             </span>
-            <span aria-hidden="true">·</span>
-            <span className={role === 'teacher' ? 'text-amber-400 font-semibold' : 'text-sky-400 font-semibold'}>
-              {role === 'teacher'
-                ? 'Guru Pemantau Kebal'
-                : isStandaloneMode
-                  ? 'Siswa · Mode Mandiri'
-                  : 'Siswa Pendaki'}
-            </span>
-            <span aria-hidden="true">·</span>
-            <span className="text-slate-200">
-              Lv.{settings.difficultyLevel} {levelInfo.name}
-            </span>
-            <span aria-hidden="true" className="hidden md:inline">·</span>
-            <span className="hidden md:inline font-mono-num text-sky-300">
-              {currentCP >= 25
-                ? essayDone
-                  ? `Puncak Selesai 100% (Isian ${essayCorrect}/${essayQuestionCount || 5})`
-                  : `Menuju Gapura Puncak — Pos Ujian ${essayQuestionCount || 5} Isian (${hud.distToNextCp} m)`
-                : `Menuju CP ${hud.nextCpIndex} (${hud.distToNextCp} m · ↑ ${hud.elevToNextCp} m)`}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {roomStatus === 'waiting' && (
-            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-400/50 text-[11px] font-bold text-amber-300">
-              LOBI TUNGGU
-            </span>
-          )}
-          <div
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-mono-num tabular-nums text-xs sm:text-sm font-bold whitespace-nowrap ${
-              timerUrgent
-                ? 'bg-red-950/90 border-red-400 text-red-200'
-                : 'bg-slate-900 border-amber-400/40 text-amber-300'
-            }`}
-            title="Sisa Waktu Ujian / Sesi Kelas"
-          >
-            <Clock className={`w-3.5 h-3.5 shrink-0 ${timerUrgent ? 'text-red-400' : 'text-amber-400'}`} />
-            <span>
+            <span className="text-slate-500">·</span>
+            <span
+              className={`font-mono-num tabular-nums text-xs font-bold whitespace-nowrap ${
+                timerUrgent ? 'text-red-300' : 'text-amber-300'
+              }`}
+            >
               {remMM}:{remSS}
             </span>
+            <span className="text-slate-500">·</span>
+            {role === 'student' ? (
+              <span className="font-mono-num text-xs font-bold text-emerald-300 whitespace-nowrap">
+                {score} pts
+              </span>
+            ) : (
+              <span className="font-mono-num text-xs font-semibold text-amber-200 whitespace-nowrap">
+                Guru ({participants.length})
+              </span>
+            )}
           </div>
 
-          {hud.locomotionMode !== 'walk' && (
-            <span className="hidden sm:inline px-2 py-0.5 rounded bg-sky-700/80 border border-sky-400/50 text-[11px] font-semibold text-white">
-              {hud.locomotionMode === 'climb' ? 'Memanjat Tangga' : 'Berseluncur'}
-            </span>
-          )}
-          {role === 'student' && (
-            <div className="hidden sm:flex items-center gap-2.5 text-xs font-mono-num pr-2 border-r border-white/10">
-              <span className="text-amber-300 font-bold">{score} pts</span>
-              <span className="text-red-300">Jatuh {fallCount}</span>
-            </div>
-          )}
-
-          <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-300 pr-2 border-r border-white/10 whitespace-nowrap">
-            <span>{TIME_LABELS[settings.timeOfDay]}</span>
-            <span aria-hidden="true">·</span>
-            <span>{WEATHER_LABELS[settings.weather] || settings.weather}</span>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={onToggleAudio}
+              className="inline-flex items-center justify-center p-1 rounded-md bg-slate-900 border border-white/10 text-slate-100 cursor-pointer"
+              title="Aktifkan/Matikan Suara"
+            >
+              {muted ? (
+                <VolumeX className="w-3.5 h-3.5 text-red-400" />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onToggleLowGraphics}
+              className="inline-flex items-center justify-center p-1 rounded-md bg-slate-900 border border-white/10 text-slate-100 cursor-pointer"
+              title="Mode Grafis Ringan / Normal"
+            >
+              {lowGraphics ? (
+                <BatteryCharging className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+              )}
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={onToggleAudio}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap"
-            title="Aktifkan/Matikan Suara"
-          >
-            {muted ? (
-              <VolumeX className="w-3.5 h-3.5 text-red-400" />
-            ) : (
-              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-            )}
-            <span className="hidden sm:inline">{muted ? 'OFF' : 'ON'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onToggleLowGraphics}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap"
-            title="Mode Grafis Ringan / Normal"
-          >
-            {lowGraphics ? (
-              <BatteryCharging className="w-3.5 h-3.5 text-emerald-400" />
-            ) : (
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-            )}
-            <span className="hidden lg:inline">{lowGraphics ? 'Ringan' : 'Normal'}</span>
-          </button>
-        </div>
-      </header>
-
-      {/* TOP-LEFT CIRCULAR RADAR MAP & VERTICAL PEAK ALTITUDE BAR */}
-      <div className="fixed top-16 left-3 flex flex-col items-center gap-2.5">
-        {/* Circular Radar Map */}
-        <div
-          className="relative w-24 h-24 rounded-full bg-slate-950/88 border-2 border-sky-400/55 shadow-lg overflow-hidden"
-          title="Radar Arah Checkpoint & Pendaki Sekitar"
+        </header>
+      ) : (
+        <header
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className="fixed top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-3 px-3.5 py-2 rounded-xl bg-slate-950/88 border border-white/15 shadow-lg pointer-events-auto touch-none"
         >
-          {/* Concentric rings & crosshairs */}
-          <div className="absolute inset-3 rounded-full border border-sky-400/20" />
-          <div className="absolute inset-7 rounded-full border border-sky-400/15" />
-          <div className="absolute inset-x-0 top-1/2 h-px bg-sky-400/15" />
-          <div className="absolute inset-y-0 left-1/2 w-px bg-sky-400/15" />
+          <div className="flex items-center gap-3 min-w-0 flex-wrap">
+            <div className="flex items-center gap-2 shrink-0">
+              <Mountain className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="font-display text-base sm:text-lg font-extrabold tracking-wide text-white whitespace-nowrap">
+                WOWO PEAK
+              </span>
+            </div>
 
-          {/* Nearby teammate/teacher blips */}
-          {hud.nearbyBlips.map((b) => (
+            <span className="text-slate-600 hidden sm:inline">|</span>
+
+            <div className="flex items-center gap-2 text-xs text-slate-300 truncate">
+              <span>
+                Ruang <strong className="font-mono-num text-white">{roomCode}</strong>
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className={role === 'teacher' ? 'text-amber-400 font-semibold' : 'text-sky-400 font-semibold'}>
+                {role === 'teacher'
+                  ? 'Guru Pemantau Kebal'
+                  : isStandaloneMode
+                    ? 'Siswa · Mode Mandiri'
+                    : 'Siswa Pendaki'}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="text-slate-200">
+                Lv.{settings.difficultyLevel} {levelInfo.name}
+              </span>
+              <span aria-hidden="true" className="hidden md:inline">·</span>
+              <span className="hidden md:inline font-mono-num text-sky-300">
+                {currentCP >= 25
+                  ? essayDone
+                    ? `Puncak Selesai 100% (Isian ${essayCorrect}/${essayQuestionCount || 5})`
+                    : `Menuju Gapura Puncak — Pos Ujian ${essayQuestionCount || 5} Isian (${hud.distToNextCp} m)`
+                  : `Menuju CP ${hud.nextCpIndex} (${hud.distToNextCp} m · ↑ ${hud.elevToNextCp} m)`}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {roomStatus === 'waiting' && (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-400/50 text-[11px] font-bold text-amber-300">
+                LOBI TUNGGU
+              </span>
+            )}
             <div
-              key={b.id}
-              title={b.name}
-              className={`absolute w-2 h-2 rounded-full -translate-x-1/2 -translate-y-1/2 ${
-                b.role === 'teacher' ? 'bg-amber-400 ring-1 ring-white' : 'bg-sky-400'
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-mono-num tabular-nums text-xs sm:text-sm font-bold whitespace-nowrap ${
+                timerUrgent
+                  ? 'bg-red-950/90 border-red-400 text-red-200'
+                  : 'bg-slate-900 border-amber-400/40 text-amber-300'
               }`}
+              title="Sisa Waktu Ujian / Sesi Kelas"
+            >
+              <Clock className={`w-3.5 h-3.5 shrink-0 ${timerUrgent ? 'text-red-400' : 'text-amber-400'}`} />
+              <span>
+                {remMM}:{remSS}
+              </span>
+            </div>
+
+            {hud.locomotionMode !== 'walk' && (
+              <span className="hidden sm:inline px-2 py-0.5 rounded bg-sky-700/80 border border-sky-400/50 text-[11px] font-semibold text-white">
+                {hud.locomotionMode === 'climb' ? 'Memanjat Tangga' : 'Berseluncur'}
+              </span>
+            )}
+            {role === 'student' && (
+              <div className="hidden sm:flex items-center gap-2.5 text-xs font-mono-num pr-2 border-r border-white/10">
+                <span className="text-amber-300 font-bold">{score} pts</span>
+                <span className="text-red-300">Jatuh {fallCount}</span>
+              </div>
+            )}
+
+            <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-300 pr-2 border-r border-white/10 whitespace-nowrap">
+              <span>{TIME_LABELS[settings.timeOfDay]}</span>
+              <span aria-hidden="true">·</span>
+              <span>{WEATHER_LABELS[settings.weather] || settings.weather}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={onToggleAudio}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap"
+              title="Aktifkan/Matikan Suara"
+            >
+              {muted ? (
+                <VolumeX className="w-3.5 h-3.5 text-red-400" />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span className="hidden sm:inline">{muted ? 'OFF' : 'ON'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleLowGraphics}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap"
+              title="Mode Grafis Ringan / Normal"
+            >
+              {lowGraphics ? (
+                <BatteryCharging className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+              )}
+              <span className="hidden lg:inline">{lowGraphics ? 'Ringan' : 'Normal'}</span>
+            </button>
+          </div>
+        </header>
+      )}
+
+      {/* TOP-LEFT CIRCULAR RADAR MAP & VERTICAL PEAK ALTITUDE BAR (DESKTOP ONLY) */}
+      {!isCompactMobile && (
+        <div className="fixed top-16 left-3 flex flex-col items-center gap-2.5">
+          {/* Circular Radar Map */}
+          <div
+            className="relative w-24 h-24 rounded-full bg-slate-950/88 border-2 border-sky-400/55 shadow-lg overflow-hidden"
+            title="Radar Arah Checkpoint & Pendaki Sekitar"
+          >
+            {/* Concentric rings & crosshairs */}
+            <div className="absolute inset-3 rounded-full border border-sky-400/20" />
+            <div className="absolute inset-7 rounded-full border border-sky-400/15" />
+            <div className="absolute inset-x-0 top-1/2 h-px bg-sky-400/15" />
+            <div className="absolute inset-y-0 left-1/2 w-px bg-sky-400/15" />
+
+            {/* Nearby teammate/teacher blips */}
+            {hud.nearbyBlips.map((b) => (
+              <div
+                key={b.id}
+                title={b.name}
+                className={`absolute w-2 h-2 rounded-full -translate-x-1/2 -translate-y-1/2 ${
+                  b.role === 'teacher' ? 'bg-amber-400 ring-1 ring-white' : 'bg-sky-400'
+                }`}
+                style={{
+                  left: `${50 + b.relX * 44}%`,
+                  top: `${50 + b.relY * 44}%`,
+                }}
+              />
+            ))}
+
+            {/* Target CP dot */}
+            <div
+              className="absolute w-3 h-3 rounded-full bg-amber-300 border border-slate-950 -translate-x-1/2 -translate-y-1/2 shadow"
               style={{
-                left: `${50 + b.relX * 44}%`,
-                top: `${50 + b.relY * 44}%`,
+                left: `${50 + hud.targetBlip.relX * 44}%`,
+                top: `${50 + hud.targetBlip.relY * 44}%`,
               }}
             />
-          ))}
 
-          {/* Target CP dot */}
-          <div
-            className="absolute w-3 h-3 rounded-full bg-amber-300 border border-slate-950 -translate-x-1/2 -translate-y-1/2 shadow"
-            style={{
-              left: `${50 + hud.targetBlip.relX * 44}%`,
-              top: `${50 + hud.targetBlip.relY * 44}%`,
-            }}
-          />
+            {/* Center Player Heading Chevron */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="text-white text-xs font-bold drop-shadow">▲</div>
+            </div>
 
-          {/* Center Player Heading Chevron */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-white text-xs font-bold drop-shadow">▲</div>
+            <div className="absolute bottom-1 inset-x-0 text-center text-[9px] font-mono-num font-bold text-sky-200">
+              {hud.nextCpIndex >= 26 ? 'GAPURA' : `CP ${hud.nextCpIndex}`}
+            </div>
           </div>
 
-          <div className="absolute bottom-1 inset-x-0 text-center text-[9px] font-mono-num font-bold text-sky-200">
-            {hud.nextCpIndex >= 26 ? 'GAPURA' : `CP ${hud.nextCpIndex}`}
+          {/* Vertical Peak Progress Bar (0% - 100%) */}
+          <div className="flex flex-col items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-950/88 border border-white/15 shadow-lg">
+            <Mountain className="w-4 h-4 text-amber-400" />
+            <span className="text-[10px] font-mono-num font-bold text-white">{hud.altitudePct}%</span>
+            <div className="relative w-3 h-28 rounded-full bg-slate-800 border border-white/10">
+              <div
+                className="absolute bottom-0 inset-x-0 rounded-full bg-gradient-to-t from-emerald-500 via-amber-400 to-orange-500 transition-[height] duration-150"
+                style={{ height: `${hud.altitudePct}%` }}
+              />
+              <div
+                className="absolute left-1/2 -translate-x-1/2 translate-y-1/2 w-4 h-4 rounded-full bg-yellow-300 border-2 border-slate-950 shadow transition-[bottom] duration-150"
+                style={{ bottom: `${hud.altitudePct}%` }}
+              />
+            </div>
+            <span className="text-[10px] font-mono-num text-slate-300">
+              CP {currentCP}/25
+            </span>
           </div>
         </div>
-
-        {/* Vertical Peak Progress Bar (0% - 100%) */}
-        <div className="flex flex-col items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-950/88 border border-white/15 shadow-lg">
-          <Mountain className="w-4 h-4 text-amber-400" />
-          <span className="text-[10px] font-mono-num font-bold text-white">{hud.altitudePct}%</span>
-          <div className="relative w-3 h-28 rounded-full bg-slate-800 border border-white/10">
-            <div
-              className="absolute bottom-0 inset-x-0 rounded-full bg-gradient-to-t from-emerald-500 via-amber-400 to-orange-500 transition-[height] duration-150"
-              style={{ height: `${hud.altitudePct}%` }}
-            />
-            <div
-              className="absolute left-1/2 -translate-x-1/2 translate-y-1/2 w-4 h-4 rounded-full bg-yellow-300 border-2 border-slate-950 shadow transition-[bottom] duration-150"
-              style={{ bottom: `${hud.altitudePct}%` }}
-            />
-          </div>
-          <span className="text-[10px] font-mono-num text-slate-300">
-            CP {currentCP}/25
-          </span>
-        </div>
-      </div>
+      )}
 
       {/* Warning Toast Banner */}
       {warningText && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 px-5 py-2.5 rounded-xl bg-red-700/95 border border-red-300/60 text-white font-semibold text-sm shadow-xl text-center max-w-[90vw]">
+        <div
+          className={`fixed left-1/2 -translate-x-1/2 z-40 rounded-xl bg-red-700/95 border border-red-300/60 text-white font-semibold shadow-xl text-center max-w-[90vw] ${
+            isCompactMobile ? 'top-11 px-3 py-1.5 text-xs' : 'top-16 px-5 py-2.5 text-sm'
+          }`}
+        >
           {warningText}
         </div>
       )}
 
       {/* Teacher-visible Pause Indicator */}
       {paused && role === 'teacher' && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-lg bg-amber-600/95 text-white text-xs font-semibold border border-amber-300/50">
+        <div
+          className={`fixed left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-lg bg-amber-600/95 text-white text-xs font-semibold border border-amber-300/50 ${
+            isCompactMobile ? 'top-11' : 'top-16'
+          }`}
+        >
           Kelas dijeda — siswa dibekukan sementara
         </div>
       )}
 
       {/* COLLAPSIBLE BOTTOM CONTROL DOCK */}
-      <div className="fixed bottom-2.5 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center max-w-[97vw] pointer-events-auto">
+      <div
+        onPointerDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        className={`fixed left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-auto touch-none ${
+          isCompactMobile || isTouchDevice
+            ? `bottom-2 ${controlsOpen ? 'z-40' : 'z-30 max-w-[calc(100vw-13.5rem)]'}`
+            : 'bottom-2.5 z-30 max-w-[97vw]'
+        }`}
+      >
         {/* Collapse / Expand Tab */}
         <button
           type="button"
@@ -505,14 +642,24 @@ export const GameHud: React.FC<GameHudProps> = ({
             setControlsOpen((v) => !v);
             setEmoteMenuOpen(false);
           }}
-          className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-t-lg bg-slate-950/92 border border-b-0 border-white/15 text-[11px] font-semibold text-amber-300 hover:text-white cursor-pointer"
+          className={`inline-flex items-center gap-1 rounded-t-lg bg-slate-950/92 border border-b-0 border-white/15 font-semibold text-amber-300 hover:text-white cursor-pointer whitespace-nowrap ${
+            isCompactMobile ? 'px-2.5 py-1 text-[10px]' : 'px-3.5 py-1 text-[11px] gap-1.5'
+          }`}
         >
           {controlsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
           <span>{controlsOpen ? 'Sembunyikan Kontrol' : 'Tampilkan Kontrol'}</span>
         </button>
 
         {controlsOpen && (
-          <div className="relative rounded-xl bg-slate-950/92 border border-white/15 px-3 py-2.5 shadow-2xl space-y-2 max-w-[97vw]">
+          <div
+            className={`relative rounded-xl bg-slate-950/92 border border-white/15 shadow-2xl space-y-2 ${
+              isCompactMobile || isTouchDevice
+                ? role === 'teacher'
+                  ? 'px-2.5 py-2 max-w-[94vw] max-h-[50vh] overflow-y-auto'
+                  : 'px-2 py-1.5 max-w-[calc(100vw-13.5rem)] max-h-[44vh] overflow-y-auto'
+                : 'px-3 py-2.5 max-w-[97vw]'
+            }`}
+          >
             {/* Emote Picker Popover */}
             {emoteMenuOpen && (
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 rounded-xl bg-slate-900 border border-amber-400/50 shadow-2xl flex flex-wrap justify-center gap-1.5 w-[340px] max-w-[92vw]">
@@ -821,10 +968,12 @@ export const GameHud: React.FC<GameHudProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => onTriggerEvent('landslide')}
-                    className="px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
+                    onClick={() => onTriggerEvent('hail')}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-900/85 hover:bg-cyan-800 border border-cyan-400/50 text-xs font-semibold text-cyan-100 cursor-pointer whitespace-nowrap"
+                    title="Turunkan hujan kristal es tajam yang memperlambat gerak siswa"
                   >
-                    Longsor
+                    <Snowflake className="w-3.5 h-3.5" />
+                    <span>Hujan Es</span>
                   </button>
                   <button
                     type="button"
@@ -836,32 +985,18 @@ export const GameHud: React.FC<GameHudProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      onUpdateSettings({
-                        weather: settings.weather === 'hujan' ? 'cerah' : 'hujan',
-                      })
-                    }
-                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
-                      settings.weather === 'hujan'
-                        ? 'bg-sky-700 border-sky-400 text-white'
-                        : 'bg-sky-950/80 hover:bg-sky-900 border-sky-500/40 text-sky-100'
-                    }`}
+                    onClick={() => onTriggerEvent('heavy_rain')}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-950/80 hover:bg-sky-900 border border-sky-500/40 text-xs font-semibold text-sky-100 cursor-pointer whitespace-nowrap"
+                    title="Turunkan Hujan Lebat selama 5 detik (maks 50 partikel)"
                   >
                     <CloudRain className="w-3.5 h-3.5" />
                     <span>Hujan Lebat</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      onUpdateSettings({
-                        weather: settings.weather === 'berkabut' ? 'cerah' : 'berkabut',
-                      })
-                    }
-                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
-                      settings.weather === 'berkabut'
-                        ? 'bg-slate-600 border-slate-300 text-white'
-                        : 'bg-slate-800 hover:bg-slate-700 border-slate-500/40 text-slate-100'
-                    }`}
+                    onClick={() => onTriggerEvent('thick_fog')}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-500/40 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap"
+                    title="Turunkan Kabut Tebal menyelimuti gunung selama 5 detik"
                   >
                     <CloudFog className="w-3.5 h-3.5" />
                     <span>Kabut Tebal</span>
@@ -870,6 +1005,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                     type="button"
                     onClick={() => onTriggerEvent('wildlife')}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-900/85 hover:bg-amber-800 border border-amber-500/40 text-xs font-semibold text-amber-100 cursor-pointer whitespace-nowrap"
+                    title="Munculkan satwa liar di jalur pendakian selama 5 detik"
                   >
                     <PawPrint className="w-3.5 h-3.5" />
                     <span>Satwa Liar</span>
@@ -878,6 +1014,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                     type="button"
                     onClick={() => onTriggerEvent('kuntilanak')}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
+                    title="Munculkan 3 Kuntilanak realistis di jalur pendakian selama 5 detik"
                   >
                     <Ghost className="w-3.5 h-3.5" />
                     <span>Kuntilanak</span>
@@ -886,6 +1023,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                     type="button"
                     onClick={() => onTriggerEvent('pocong')}
                     className="px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
+                    title="Munculkan 3 Pocong realistis di jalur pendakian selama 5 detik"
                   >
                     Pocong
                   </button>
@@ -893,22 +1031,25 @@ export const GameHud: React.FC<GameHudProps> = ({
                     type="button"
                     onClick={() => onTriggerEvent('earthquake')}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-900/85 hover:bg-amber-800 border border-amber-500/40 text-xs font-semibold text-amber-100 cursor-pointer whitespace-nowrap"
+                    title="Guncangan Gempa Bumi gunung selama 5 detik"
                   >
                     <Activity className="w-3.5 h-3.5" />
                     <span>Gempa</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => onTriggerEvent('wildfire')}
+                    onClick={() => onTriggerEvent('fire_rain')}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-orange-900/85 hover:bg-orange-800 border border-orange-500/40 text-xs font-semibold text-orange-100 cursor-pointer whitespace-nowrap"
+                    title="Turunkan Hujan Api selama 5 detik (maks 50 partikel)"
                   >
                     <Flame className="w-3.5 h-3.5" />
-                    <span>Kebakaran</span>
+                    <span>Hujan Api</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => onTriggerEvent('meteor')}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-900/85 hover:bg-rose-800 border border-rose-500/40 text-xs font-semibold text-rose-100 cursor-pointer whitespace-nowrap"
+                    title="Turunkan Hujan Meteor Api selama 5 detik"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>Hujan Meteor</span>
@@ -978,34 +1119,74 @@ export const GameHud: React.FC<GameHudProps> = ({
         )}
       </div>
 
-      {/* MOBILE VIRTUAL JOYSTICK & JUMP */}
+      {/* MOBILE / TOUCH MULTI-TOUCH CONTROLS: JOYSTICK (BOTTOM-LEFT) + LOMPAT (BOTTOM-RIGHT) + CP BAR (ABOVE JUMP) */}
       {isTouchDevice && (
-        <div className="fixed bottom-24 left-4 right-4 flex items-end justify-between pointer-events-none">
+        <div
+          ref={joyZoneRef}
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={handleJoyStart}
+          onTouchMove={handleJoyMove}
+          onTouchEnd={handleJoyEnd}
+          onTouchCancel={handleJoyEnd}
+          className={`fixed bottom-6 left-6 z-20 rounded-full bg-slate-950/65 border-2 border-white/25 pointer-events-auto touch-none ${
+            isCompactMobile ? 'w-20 h-20' : 'w-24 h-24'
+          }`}
+          aria-label="Analog Joystick"
+        >
           <div
-            ref={joyZoneRef}
-            onTouchMove={handleJoyMove}
-            onTouchEnd={handleJoyEnd}
-            onTouchCancel={handleJoyEnd}
-            className="relative w-24 h-24 rounded-full bg-slate-950/65 border-2 border-white/25 pointer-events-auto touch-none"
-          >
+            className={`rounded-full bg-sky-500/85 border border-white/50 absolute ${
+              isCompactMobile ? 'w-9 h-9 left-[22px] top-[22px]' : 'w-10 h-10 left-7 top-7'
+            }`}
+            style={{ transform: `translate(${knobOffset.x}px, ${knobOffset.y}px)` }}
+          />
+        </div>
+      )}
+
+      {isCompactMobile && (
+        <div
+          className={`fixed right-6 z-20 flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-xl bg-slate-950/88 border border-white/15 shadow-lg pointer-events-none ${
+            isTouchDevice ? 'bottom-28' : 'bottom-6'
+          }`}
+        >
+          <div className="flex items-center gap-1">
+            <Mountain className="w-3 h-3 text-amber-400" />
+            <span className="text-[10px] font-mono-num font-bold text-white">{hud.altitudePct}%</span>
+          </div>
+          <div className="relative w-2.5 h-16 rounded-full bg-slate-800 border border-white/10">
             <div
-              className="w-10 h-10 rounded-full bg-sky-500/85 border border-white/50 absolute left-7 top-7"
-              style={{ transform: `translate(${knobOffset.x}px, ${knobOffset.y}px)` }}
+              className="absolute bottom-0 inset-x-0 rounded-full bg-gradient-to-t from-emerald-500 via-amber-400 to-orange-500 transition-[height] duration-150"
+              style={{ height: `${hud.altitudePct}%` }}
+            />
+            <div
+              className="absolute left-1/2 -translate-x-1/2 translate-y-1/2 w-3.5 h-3.5 rounded-full bg-yellow-300 border-2 border-slate-950 shadow transition-[bottom] duration-150"
+              style={{ bottom: `${hud.altitudePct}%` }}
             />
           </div>
-
-          <button
-            type="button"
-            onTouchStart={(e) => {
-              e.preventDefault();
-              onMobileJump();
-            }}
-            onClick={onMobileJump}
-            className="w-16 h-16 rounded-full bg-amber-600/90 active:bg-amber-500 border-2 border-amber-200/70 text-white font-bold text-[11px] tracking-wide pointer-events-auto"
-          >
-            LOMPAT
-          </button>
+          <span className="text-[10px] font-mono-num font-semibold text-slate-200 whitespace-nowrap">
+            CP {currentCP}/25
+          </span>
         </div>
+      )}
+
+      {isTouchDevice && (
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            lastTouchJumpAtRef.current = performance.now();
+            onMobileJump();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (performance.now() - lastTouchJumpAtRef.current < 400) return;
+            onMobileJump();
+          }}
+          className="fixed bottom-6 right-6 z-20 w-16 h-16 rounded-full bg-amber-600/90 active:bg-amber-500 border-2 border-amber-200/70 text-white font-bold text-xs tracking-wide pointer-events-auto touch-none shadow-lg"
+        >
+          LOMPAT
+        </button>
       )}
 
       {/* IN-GAME AVATAR EDITOR MODAL */}
@@ -1047,79 +1228,160 @@ export const GameHud: React.FC<GameHudProps> = ({
       )}
 
       {/* PARTICIPANTS ROSTER MODAL (TEACHER) */}
-      {rosterModalOpen && role === 'teacher' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 pointer-events-auto">
-          <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-amber-500/40 p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-white">Daftar Peserta Ekspedisi</h3>
-                <p className="text-xs text-slate-400">
-                  Ruang {roomCode} · {participants.length} siswa terdaftar
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setRosterModalOpen(false)}
-                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 cursor-pointer"
-              >
-                Tutup
-              </button>
-            </div>
+      {rosterModalOpen && role === 'teacher' && (() => {
+        const q = rosterSearch.trim().toLowerCase();
+        const filtered = participants
+          .filter((stu) => !q || stu.name.toLowerCase().includes(q))
+          .slice()
+          .sort((a, b) => {
+            if (rosterSort === 'cp') return b.currentCP - a.currentCP || b.score - a.score;
+            if (rosterSort === 'name') return a.name.localeCompare(b.name);
+            return b.score - a.score || b.currentCP - a.currentCP;
+          });
+        const pageSize = 10;
+        const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+        const safePage = Math.min(rosterPage, totalPages);
+        const paged = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+        const onlineCount = participants.filter((p) => p.online).length;
 
-            {participants.length === 0 ? (
-              <div className="py-8 text-center text-sm text-slate-400">
-                Belum ada siswa bergabung. Bagikan kode ruangan{' '}
-                <strong className="font-mono-num text-white">{roomCode}</strong> atau klik{' '}
-                <strong>Link Siswa</strong>.
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 pointer-events-auto">
+            <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-amber-500/40 p-5 shadow-2xl space-y-3">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div>
+                  <h3 className="text-lg font-bold text-white">Daftar Peserta Ekspedisi</h3>
+                  <p className="text-xs text-slate-400">
+                    Ruang {roomCode} · {participants.length} siswa ({onlineCount} aktif)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRosterModalOpen(false)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 cursor-pointer"
+                >
+                  Tutup
+                </button>
               </div>
-            ) : (
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {participants.map((stu) => (
-                  <div
-                    key={stu.id}
-                    className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-slate-950/80 border border-white/10 text-xs"
+
+              {participants.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={rosterSearch}
+                    onChange={(e) => {
+                      setRosterSearch(e.target.value);
+                      setRosterPage(1);
+                    }}
+                    placeholder="Cari nama siswa..."
+                    className="flex-1 px-3 py-1.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                  />
+                  <select
+                    value={rosterSort}
+                    onChange={(e) => {
+                      setRosterSort(e.target.value as 'score' | 'cp' | 'name');
+                      setRosterPage(1);
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-amber-400"
                   >
-                    <div className="min-w-0">
-                      <div className="font-semibold text-white truncate">
-                        {stu.name}{' '}
-                        <span className="text-[11px] font-normal text-slate-400">
-                          ({stu.online ? 'Aktif' : 'Offline'})
-                        </span>
+                    <option value="score">Skor Tertinggi</option>
+                    <option value="cp">CP Terdepan</option>
+                    <option value="name">Nama A–Z</option>
+                  </select>
+                </div>
+              )}
+
+              {participants.length === 0 ? (
+                <div className="py-8 text-center text-sm text-slate-400">
+                  Belum ada siswa bergabung. Bagikan kode ruangan{' '}
+                  <strong className="font-mono-num text-white">{roomCode}</strong> atau klik{' '}
+                  <strong>Link Siswa</strong>.
+                </div>
+              ) : filtered.length === 0 ? (
+                <div className="py-6 text-center text-xs text-slate-400">
+                  Tidak ada siswa dengan nama &quot;{rosterSearch}&quot;.
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                    {paged.map((stu, idx) => (
+                      <div
+                        key={stu.id}
+                        className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-950/80 border border-white/10 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-semibold text-white truncate">
+                            <span className="text-amber-400 font-mono-num mr-1.5">
+                              #{(safePage - 1) * pageSize + idx + 1}
+                            </span>
+                            {stu.name}{' '}
+                            <span
+                              className={`text-[11px] font-normal ${stu.online ? 'text-emerald-400' : 'text-slate-500'}`}
+                            >
+                              ({stu.online ? 'Aktif' : 'Offline'})
+                            </span>
+                          </div>
+                          <div className="text-[11px] font-mono-num text-slate-400 mt-0.5">
+                            CP {stu.currentCP}/25 · PG {stu.correctCount} · Isian {stu.essayCorrect || 0}/5 · {stu.score} pts · Jatuh {stu.fallCount}
+                          </div>
+                        </div>
+
+                        {confirmKickId === stu.id ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmKickId(null);
+                              onKickStudent(stu.id, stu.name);
+                            }}
+                            onMouseLeave={() => setConfirmKickId(null)}
+                            className="px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs font-semibold text-white cursor-pointer shrink-0"
+                          >
+                            Yakin Kick?
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmKickId(stu.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-red-700 text-xs font-semibold text-slate-200 hover:text-white cursor-pointer shrink-0 transition-colors"
+                          >
+                            <UserX className="w-3.5 h-3.5" />
+                            <span>Keluarkan</span>
+                          </button>
+                        )}
                       </div>
-                      <div className="text-[11px] font-mono-num text-slate-400 mt-0.5">
-                        CP {stu.currentCP}/25 · PG {stu.correctCount} · Isian {stu.essayCorrect || 0}/5 · {stu.score} pts · Jatuh {stu.fallCount}
+                    ))}
+                  </div>
+
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-2 border-t border-white/10 text-xs text-slate-300">
+                      <span>
+                        Halaman {safePage} / {totalPages} ({filtered.length} siswa)
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={safePage <= 1}
+                          onClick={() => setRosterPage(Math.max(1, safePage - 1))}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 cursor-pointer"
+                        >
+                          Sebelumnya
+                        </button>
+                        <button
+                          type="button"
+                          disabled={safePage >= totalPages}
+                          onClick={() => setRosterPage(Math.min(totalPages, safePage + 1))}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 cursor-pointer"
+                        >
+                          Berikutnya
+                        </button>
                       </div>
                     </div>
-
-                    {confirmKickId === stu.id ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setConfirmKickId(null);
-                          onKickStudent(stu.id, stu.name);
-                        }}
-                        onMouseLeave={() => setConfirmKickId(null)}
-                        className="px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs font-semibold text-white cursor-pointer shrink-0"
-                      >
-                        Yakin Kick?
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmKickId(stu.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-red-700 text-xs font-semibold text-slate-200 hover:text-white cursor-pointer shrink-0 transition-colors"
-                      >
-                        <UserX className="w-3.5 h-3.5" />
-                        <span>Keluarkan</span>
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+                  )}
+                </>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* LIVE EXCEL QUESTION BANK MODAL (TEACHER) */}
       {excelModalOpen && role === 'teacher' && (

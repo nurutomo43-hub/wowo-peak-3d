@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import type {
   EssayQuestion,
   ExportStudentRow,
@@ -643,6 +643,23 @@ export function buildStudentQuizDeck(
   });
 }
 
+export function buildStudentEssayDeck(
+  baseEssayQuestions: EssayQuestion[] | null | undefined,
+  roomCode: string,
+  studentId: string,
+): EssayQuestion[] {
+  const source =
+    Array.isArray(baseEssayQuestions) && baseEssayQuestions.length > 0
+      ? baseEssayQuestions
+      : DEFAULT_ESSAY_QUESTIONS;
+  const rng = mulberry32(hashSeed(`${roomCode}::${studentId}::essay`));
+  const shuffled = shuffleWithRng(source, rng);
+  return shuffled.map((q) => ({
+    ...q,
+    acceptedAnswers: [...q.acceptedAnswers],
+  }));
+}
+
 export function downloadPgTemplateExcel() {
   const rows = [
     {
@@ -1062,6 +1079,94 @@ export async function parseEssayExcelQuestions(
   return parseEssayRowsFromAoA(aoa);
 }
 
+function formatStyledWorksheet(
+  ws: XLSX.WorkSheet,
+  centerCols: Set<number>,
+  wrapCols: Set<number>,
+  statusColIdx: number,
+) {
+  const ref = ws['!ref'];
+  if (!ref) return;
+  const range = XLSX.utils.decode_range(ref);
+  const colWidths: number[] = [];
+  const rowHeights: Array<{ hpt: number }> = [];
+
+  const thinBorder = {
+    top: { style: 'thin', color: { rgb: 'CBD5E1' } },
+    bottom: { style: 'thin', color: { rgb: 'CBD5E1' } },
+    left: { style: 'thin', color: { rgb: 'CBD5E1' } },
+    right: { style: 'thin', color: { rgb: 'CBD5E1' } },
+  };
+
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    colWidths[c] = 14;
+  }
+
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    let maxLines = 1;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const cell = ws[addr];
+      if (!cell) continue;
+      const text = cell.v === undefined || cell.v === null ? '' : String(cell.v);
+      const longestLine = text
+        .split('\n')
+        .reduce((mx, line) => Math.max(mx, line.length), 0);
+      const isWrap = wrapCols.has(c);
+      const cap = isWrap ? 52 : 34;
+      colWidths[c] = Math.min(cap, Math.max(colWidths[c], longestLine + 5));
+      if (isWrap && text.length > 42) {
+        maxLines = Math.max(maxLines, Math.ceil(text.length / 44));
+      }
+
+      if (r === 0) {
+        cell.s = {
+          font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: 'FFFFFF' } },
+          fill: { patternType: 'solid', fgColor: { rgb: '1E3A5F' } },
+          alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+          border: thinBorder,
+        };
+      } else {
+        const zebraRgb = r % 2 === 1 ? 'F8FAFC' : 'EEF2F6';
+        let fillRgb = zebraRgb;
+        let fontRgb = '0F172A';
+        let isBold = false;
+
+        if (c === statusColIdx) {
+          if (text === 'Selesai Ujian Puncak' || text === 'Benar') {
+            fillRgb = 'DCFCE7';
+            fontRgb = '166534';
+            isBold = true;
+          } else if (text === 'Dalam Pendakian' || text === 'Di Puncak (Belum Isian)') {
+            fillRgb = 'FEF9C3';
+            fontRgb = '854D0E';
+            isBold = true;
+          } else if (text === 'Salah') {
+            fillRgb = 'FEE2E2';
+            fontRgb = '991B1B';
+            isBold = true;
+          }
+        }
+
+        cell.s = {
+          font: { name: 'Calibri', sz: 10, bold: isBold, color: { rgb: fontRgb } },
+          fill: { patternType: 'solid', fgColor: { rgb: fillRgb } },
+          alignment: {
+            horizontal: centerCols.has(c) || c === statusColIdx ? 'center' : 'left',
+            vertical: 'center',
+            wrapText: isWrap,
+          },
+          border: thinBorder,
+        };
+      }
+    }
+    rowHeights[r] = { hpt: r === 0 ? 30 : Math.min(64, Math.max(22, maxLines * 15 + 8)) };
+  }
+
+  ws['!cols'] = colWidths.map((wch) => ({ wch }));
+  ws['!rows'] = rowHeights;
+}
+
 export function exportResultsToExcel(
   roomCode: string,
   leaderboard: ParticipantSummary[],
@@ -1145,6 +1250,11 @@ export function exportResultsToExcel(
   const ws1 = XLSX.utils.json_to_sheet(summarySheetData);
   const ws2 = XLSX.utils.json_to_sheet(essayDetailData);
   const ws3 = XLSX.utils.json_to_sheet(detailSheetData);
+
+  formatStyledWorksheet(ws1, new Set([0, 2, 3, 4, 5, 6, 7, 8, 9, 10]), new Set([1]), 11);
+  formatStyledWorksheet(ws2, new Set([1, 5, 6]), new Set([0, 2, 3, 4]), 5);
+  formatStyledWorksheet(ws3, new Set([1, 3, 4, 5, 6]), new Set([0, 2]), 5);
+
   XLSX.utils.book_append_sheet(wb, ws1, 'Rekap_Nilai_Akhir');
   XLSX.utils.book_append_sheet(wb, ws2, 'Rincian_Isian_Singkat');
   XLSX.utils.book_append_sheet(wb, ws3, 'Detail_Pilihan_Ganda');

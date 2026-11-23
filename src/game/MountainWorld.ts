@@ -742,6 +742,9 @@ export class MountainWorld {
     const h = Math.max(1, this.container.clientHeight || window.innerHeight);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.renderer.setPixelRatio(
+      this.lowGraphics || this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.25),
+    );
     this.renderer.setSize(w, h);
   }
 
@@ -3549,8 +3552,11 @@ export class MountainWorld {
   public spawnMeteorAhead(playerX: number, playerZ: number, maxAge = 5.0) {
     const count = 4;
     for (let i = 0; i < count && this.meteors.length < 10; i++) {
-      const ahead = this.getTrailPointAhead(playerX, playerZ, 12 + i * 7 + Math.random() * 5);
-      if (this.isInsideAnyCheckpointSafeZone(ahead.x, ahead.z)) continue;
+      let ahead = this.getTrailPointAhead(playerX, playerZ, 12 + i * 7 + Math.random() * 5);
+      if (this.isInsideAnyCheckpointSafeZone(ahead.x, ahead.z)) {
+        ahead = this.getTrailPointAhead(playerX, playerZ, 24 + i * 8);
+        if (this.isInsideAnyCheckpointSafeZone(ahead.x, ahead.z)) continue;
+      }
       let mx = ahead.x + (Math.random() - 0.5) * 3.5;
       let mz = ahead.z + (Math.random() - 0.5) * 3.5;
       let gy = this.getGroundHeight(mx, mz);

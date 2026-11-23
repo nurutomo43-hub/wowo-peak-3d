@@ -365,46 +365,166 @@ export class SoundEngine {
 
   public playKuntilanakLaugh() {
     if (!this.ctx || this.muted) return;
-    const now = this.ctx.currentTime;
-    const delay = this.ctx.createDelay();
-    delay.delayTime.value = 0.19;
-    const fb = this.ctx.createGain();
-    fb.gain.value = 0.38;
-    delay.connect(fb);
+    if (this.ctx.state === 'suspended') {
+      void this.ctx.resume();
+    }
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // Master limiter/gain so layered eerie cackles stay clear and never clip
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(0.95, now);
+    masterGain.connect(ctx.destination);
+
+    // Spooky mountain cavern echo chain (Delay -> Lowpass -> Feedback)
+    const delay = ctx.createDelay(1.0);
+    delay.delayTime.value = 0.21;
+    const echoTone = ctx.createBiquadFilter();
+    echoTone.type = 'lowpass';
+    echoTone.frequency.value = 2800;
+    const fb = ctx.createGain();
+    fb.gain.value = 0.34;
+    const echoMix = ctx.createGain();
+    echoMix.gain.value = 0.42;
+
+    delay.connect(echoTone);
+    echoTone.connect(fb);
     fb.connect(delay);
-    delay.connect(this.ctx.destination);
+    echoTone.connect(echoMix);
+    echoMix.connect(masterGain);
 
-    const pulses = [0, 0.14, 0.29, 0.45, 0.62, 0.81, 1.03];
-    pulses.forEach((offset, idx) => {
-      if (!this.ctx) return;
-      const osc = this.ctx.createOscillator();
-      const vib = this.ctx.createOscillator();
-      const vibGain = this.ctx.createGain();
-      const gain = this.ctx.createGain();
+    // Human vocal formant filter chain (F1 nasal ~880Hz + F2 shrill ~2350Hz)
+    const vocalBus = ctx.createGain();
+    vocalBus.gain.value = 1.0;
 
-      osc.type = 'triangle';
-      const baseFreq = 980 - idx * 42 + Math.random() * 44;
-      osc.frequency.setValueAtTime(baseFreq, now + offset);
-      osc.frequency.linearRampToValueAtTime(baseFreq * 1.22, now + offset + 0.07);
-      osc.frequency.linearRampToValueAtTime(baseFreq * 0.78, now + offset + 0.15);
+    const f1 = ctx.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.frequency.setValueAtTime(860, now);
+    f1.Q.value = 3.2;
 
-      vib.frequency.value = 21;
-      vibGain.gain.value = 54;
-      vib.connect(vibGain);
-      vibGain.connect(osc.frequency);
+    const f2 = ctx.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.frequency.setValueAtTime(2250, now);
+    f2.Q.value = 4.2;
 
-      gain.gain.setValueAtTime(0.001, now + offset);
-      gain.gain.linearRampToValueAtTime(0.15, now + offset + 0.025);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.16);
+    const f1Gain = ctx.createGain();
+    f1Gain.gain.value = 1.05;
+    const f2Gain = ctx.createGain();
+    f2Gain.gain.value = 0.72;
 
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      gain.connect(delay);
-      vib.start(now + offset);
-      osc.start(now + offset);
-      vib.stop(now + offset + 0.17);
-      osc.stop(now + offset + 0.17);
-    });
+    vocalBus.connect(f1);
+    vocalBus.connect(f2);
+    f1.connect(f1Gain);
+    f2.connect(f2Gain);
+    f1Gain.connect(masterGain);
+    f2Gain.connect(masterGain);
+    f1Gain.connect(delay);
+    f2Gain.connect(delay);
+
+    // Shared breath noise buffer for ghostly vocal rasp
+    const noiseBuf = this.createNoiseBuffer(0.9);
+
+    const scheduleLaughSyllable = (
+      offset: number,
+      dur: number,
+      startFreq: number,
+      peakFreq: number,
+      endFreq: number,
+      amp: number,
+      vibRate: number,
+      vibDepth: number,
+    ) => {
+      const t0 = now + offset;
+      const tEnd = t0 + dur;
+
+      // Primary sawtooth (rich vocal harmonics) + slightly detuned triangle (eerie shimmer)
+      const oscMain = ctx.createOscillator();
+      const oscSub = ctx.createOscillator();
+      oscMain.type = 'sawtooth';
+      oscSub.type = 'triangle';
+
+      oscMain.frequency.setValueAtTime(startFreq, t0);
+      oscMain.frequency.exponentialRampToValueAtTime(peakFreq, t0 + dur * 0.34);
+      oscMain.frequency.exponentialRampToValueAtTime(endFreq, tEnd);
+
+      oscSub.frequency.setValueAtTime(startFreq * 1.008, t0);
+      oscSub.frequency.exponentialRampToValueAtTime(peakFreq * 1.012, t0 + dur * 0.34);
+      oscSub.frequency.exponentialRampToValueAtTime(endFreq * 0.994, tEnd);
+
+      // Natural human vocal vibrato (6.5 - 8.5 Hz)
+      const lfo = ctx.createOscillator();
+      const lfoGain = ctx.createGain();
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(vibRate, t0);
+      lfoGain.gain.setValueAtTime(vibDepth, t0);
+      lfo.connect(lfoGain);
+      lfoGain.connect(oscMain.frequency);
+      lfoGain.connect(oscSub.frequency);
+
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0008, t0);
+      env.gain.linearRampToValueAtTime(amp, t0 + Math.min(0.035, dur * 0.18));
+      env.gain.setValueAtTime(amp * 0.88, t0 + dur * 0.55);
+      env.gain.exponentialRampToValueAtTime(0.0008, tEnd);
+
+      oscMain.connect(env);
+      oscSub.connect(env);
+      env.connect(vocalBus);
+
+      // Subtle breathy hiss on each "hii..." attack
+      if (noiseBuf) {
+        const breath = ctx.createBufferSource();
+        breath.buffer = noiseBuf;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.setValueAtTime(1750, t0);
+        bp.Q.value = 2.6;
+        const bEnv = ctx.createGain();
+        bEnv.gain.setValueAtTime(0.0005, t0);
+        bEnv.gain.linearRampToValueAtTime(amp * 0.36, t0 + 0.025);
+        bEnv.gain.exponentialRampToValueAtTime(0.0005, t0 + Math.min(dur, 0.25));
+        breath.connect(bp);
+        bp.connect(bEnv);
+        bEnv.connect(masterGain);
+        breath.start(t0);
+        breath.stop(t0 + Math.min(dur, 0.28));
+      }
+
+      lfo.start(t0);
+      oscMain.start(t0);
+      oscSub.start(t0);
+      lfo.stop(tEnd + 0.02);
+      oscMain.stop(tEnd + 0.02);
+      oscSub.stop(tEnd + 0.02);
+    };
+
+    // 3 eerie Indonesian Kuntilanak laugh phrases spanning ~4.8 seconds:
+    // Phrase 1 (0.00s - 1.38s): "hi-hi-hi-hi-hiiii..." rising sharp then wailing down
+    const phrase1: Array<[number, number, number, number, number, number, number, number]> = [
+      [0.0, 0.14, 640, 790, 690, 0.11, 7.2, 22],
+      [0.16, 0.14, 710, 880, 760, 0.125, 7.4, 24],
+      [0.32, 0.15, 790, 960, 820, 0.135, 7.6, 26],
+      [0.49, 0.16, 860, 1060, 900, 0.14, 7.8, 28],
+      [0.67, 0.72, 940, 1180, 620, 0.135, 6.8, 36],
+    ];
+    // Phrase 2 (1.65s - 3.12s): sharper second cackle burst circling closer
+    const phrase2: Array<[number, number, number, number, number, number, number, number]> = [
+      [1.65, 0.13, 740, 920, 790, 0.115, 7.5, 25],
+      [1.81, 0.14, 830, 1020, 860, 0.13, 7.8, 28],
+      [1.98, 0.14, 920, 1140, 960, 0.14, 8.0, 30],
+      [2.15, 0.15, 980, 1240, 1020, 0.135, 8.1, 32],
+      [2.33, 0.82, 1080, 1310, 660, 0.13, 6.5, 42],
+    ];
+    // Phrase 3 (3.42s - 4.75s): haunting distant trailing "hi-hi-hiiii..."
+    const phrase3: Array<[number, number, number, number, number, number, number, number]> = [
+      [3.42, 0.14, 760, 910, 780, 0.085, 7.0, 22],
+      [3.6, 0.15, 820, 980, 820, 0.08, 7.2, 24],
+      [3.78, 0.96, 890, 1060, 540, 0.075, 6.2, 34],
+    ];
+
+    [...phrase1, ...phrase2, ...phrase3].forEach((p) =>
+      scheduleLaughSyllable(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]),
+    );
   }
 
   public playPocongHop() {

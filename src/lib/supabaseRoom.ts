@@ -13,6 +13,7 @@ import type {
   QuizQuestion,
   RemotePlayerPayload,
   Role,
+  RoomCommandPayload,
   RoomSettings,
   RoomStatus,
 } from '../types/game';
@@ -101,6 +102,7 @@ export interface SupabaseRoomConfig {
   essayQuestions: EssayQuestion[] | null;
   studentProgress?: PersistedStudentProgress[];
   players?: PersistedStudentProgress[];
+  active_event?: RoomCommandPayload | null;
   createdAt: number;
 }
 
@@ -270,11 +272,25 @@ export type RoomBroadcastMessage =
     };
 
 let hasPlayersColumn: boolean | null = null;
+let hasActiveEventColumn: boolean | null = null;
 
 function isMissingPlayersColumnError(err: { code?: string; message?: string } | null): boolean {
   if (!err) return false;
   const msg = (err.message || '').toLowerCase();
   return err.code === '42703' || err.code === 'PGRST204' || msg.includes('players');
+}
+
+function isMissingActiveEventColumnError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  const msg = (err.message || '').toLowerCase();
+  return err.code === '42703' || err.code === 'PGRST204' || msg.includes('active_event');
+}
+
+export function createEventId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `evt_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export async function upsertSupabaseRoom(code: string, config: SupabaseRoomConfig): Promise<void> {
@@ -283,11 +299,21 @@ export async function upsertSupabaseRoom(code: string, config: SupabaseRoomConfi
   if (hasPlayersColumn === true) {
     payload.players = config.players ?? config.studentProgress ?? [];
   }
+  if (hasActiveEventColumn !== false && config.active_event !== undefined) {
+    payload.active_event = config.active_event;
+  }
 
   let { error } = await supabase.from('rooms').upsert(payload, { onConflict: 'code' });
+  if (error && isMissingActiveEventColumnError(error)) {
+    hasActiveEventColumn = false;
+    delete payload.active_event;
+    const retry = await supabase.from('rooms').upsert(payload, { onConflict: 'code' });
+    error = retry.error;
+  }
   if (error && hasPlayersColumn === true && isMissingPlayersColumnError(error)) {
     hasPlayersColumn = false;
-    const retry = await supabase.from('rooms').upsert({ code, config }, { onConflict: 'code' });
+    delete payload.players;
+    const retry = await supabase.from('rooms').upsert(payload, { onConflict: 'code' });
     error = retry.error;
   }
 
@@ -296,47 +322,111 @@ export async function upsertSupabaseRoom(code: string, config: SupabaseRoomConfi
   }
 }
 
+export async function publishRoomCommandToSupabase(
+  code: string,
+  command: RoomCommandPayload,
+  latestConfig: SupabaseRoomConfig,
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const nextConfig: SupabaseRoomConfig = {
+    ...latestConfig,
+    active_event: command,
+  };
+  const updatePayload: Record<string, unknown> = { config: nextConfig };
+  if (hasActiveEventColumn !== false) {
+    updatePayload.active_event = command;
+  }
+
+  let { error } = await supabase.from('rooms').update(updatePayload).eq('code', code);
+  if (error && isMissingActiveEventColumnError(error)) {
+    hasActiveEventColumn = false;
+    const retry = await supabase.from('rooms').update({ config: nextConfig }).eq('code', code);
+    error = retry.error;
+  }
+  if (!error && hasActiveEventColumn === null) {
+    hasActiveEventColumn = true;
+  }
+  if (error) {
+    throw new Error(error.message || 'Gagal memperbarui active_event ruangan ke Supabase.');
+  }
+}
+
 export async function fetchSupabaseRoomRecord(code: string): Promise<{
   config: SupabaseRoomConfig;
   players: PersistedStudentProgress[] | null;
+  activeEvent: RoomCommandPayload | null;
 }> {
   const supabase = getSupabaseClient();
 
   if (hasPlayersColumn !== false) {
+    const selectCols =
+      hasActiveEventColumn !== false ? 'config, players, active_event' : 'config, players';
     const { data, error } = await supabase
       .from('rooms')
-      .select('config, players')
+      .select(selectCols)
       .eq('code', code)
       .single();
 
     if (!error && data) {
       hasPlayersColumn = true;
-      if (!data.config) {
+      if (hasActiveEventColumn !== false) hasActiveEventColumn = true;
+      const row = data as unknown as {
+        config?: SupabaseRoomConfig;
+        players?: PersistedStudentProgress[];
+        active_event?: RoomCommandPayload | null;
+      };
+      if (!row.config) {
         throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
       }
       return {
-        config: data.config as SupabaseRoomConfig,
-        players: Array.isArray(data.players) ? (data.players as PersistedStudentProgress[]) : null,
+        config: row.config,
+        players: Array.isArray(row.players) ? row.players : null,
+        activeEvent: row.active_event ?? row.config.active_event ?? null,
       };
     }
 
-    if (error && isMissingPlayersColumnError(error)) {
+    if (error && isMissingActiveEventColumnError(error)) {
+      hasActiveEventColumn = false;
+    } else if (error && isMissingPlayersColumnError(error)) {
       hasPlayersColumn = false;
     } else if (error) {
       throw new Error(error.message || `Ruangan "${code}" tidak ditemukan di Supabase.`);
     }
   }
 
-  const { data, error } = await supabase.from('rooms').select('config').eq('code', code).single();
+  const fallbackCols = hasActiveEventColumn !== false ? 'config, active_event' : 'config';
+  const { data, error } = await supabase.from('rooms').select(fallbackCols).eq('code', code).single();
+  if (error && isMissingActiveEventColumnError(error)) {
+    hasActiveEventColumn = false;
+    const retry = await supabase.from('rooms').select('config').eq('code', code).single();
+    if (retry.error) {
+      throw new Error(retry.error.message || `Ruangan "${code}" tidak ditemukan di Supabase.`);
+    }
+    const rData = retry.data as unknown as { config?: SupabaseRoomConfig } | null;
+    if (!rData || !rData.config) {
+      throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
+    }
+    return {
+      config: rData.config,
+      players: null,
+      activeEvent: rData.config.active_event ?? null,
+    };
+  }
   if (error) {
     throw new Error(error.message || `Ruangan "${code}" tidak ditemukan di Supabase.`);
   }
-  if (!data || !data.config) {
+  const row = data as unknown as {
+    config?: SupabaseRoomConfig;
+    active_event?: RoomCommandPayload | null;
+  } | null;
+  if (!row || !row.config) {
     throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
   }
+  if (hasActiveEventColumn !== false) hasActiveEventColumn = true;
   return {
-    config: data.config as SupabaseRoomConfig,
+    config: row.config,
     players: null,
+    activeEvent: row.active_event ?? row.config.active_event ?? null,
   };
 }
 
@@ -575,6 +665,22 @@ export function sendTriggerDisasterBroadcast(
     void channel.send({
       type: 'broadcast',
       event: 'trigger_disaster',
+      payload,
+    });
+  } catch {
+    // ignore transient channel send errors
+  }
+}
+
+export function sendRoomCommandBroadcast(
+  channel: RealtimeChannel | null | undefined,
+  payload: RoomCommandPayload,
+) {
+  if (!channel) return;
+  try {
+    void channel.send({
+      type: 'broadcast',
+      event: 'room_command',
       payload,
     });
   } catch {

@@ -780,7 +780,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                     onChange={(e) => onUpdateSettings({ quizDuration: Number(e.target.value) })}
                     className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
                   >
-                    {[15, 20, 25, 30, 35, 40, 45].map((sec) => (
+                    {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((sec) => (
                       <option key={sec} value={sec}>
                         Kuis: {sec} Detik
                       </option>
@@ -795,9 +795,9 @@ export const GameHud: React.FC<GameHudProps> = ({
                     }
                     className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-sky-200 focus:outline-none focus:border-amber-400"
                   >
-                    {[40, 50, 60].map((sec) => (
+                    {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((sec) => (
                       <option key={sec} value={sec}>
-                        Bahasan: {sec} Dtk
+                        Bahasan: {sec} Detik
                       </option>
                     ))}
                   </select>

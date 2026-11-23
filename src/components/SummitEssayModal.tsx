@@ -44,8 +44,8 @@ export const SummitEssayModal: React.FC<SummitEssayModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/82">
-      <div className="w-full max-w-xl rounded-2xl bg-slate-900 border border-amber-400/50 p-6 shadow-2xl space-y-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/82 pointer-events-auto">
+      <div className="w-full max-w-xl max-h-[85dvh] overflow-y-auto overscroll-contain touch-pan-y rounded-2xl bg-slate-900 border border-amber-400/50 p-4 sm:p-6 pb-6 shadow-2xl space-y-3 sm:space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div className="inline-flex items-center gap-2 text-xs font-mono-num font-bold text-amber-300 tracking-wider">
             <Award className="w-4 h-4 text-amber-400" />
@@ -121,12 +121,15 @@ export const SummitEssayModal: React.FC<SummitEssayModalProps> = ({
             <div className="text-xs text-slate-300">
               Ketikan tersimpan: <strong className="text-white">"{feedback.studentAnswer}"</strong>
             </div>
-            {feedback.explanation && (
-              <p className="text-xs text-slate-300 leading-relaxed pt-0.5">
-                <span className="font-semibold text-slate-200">Pembahasan: </span>
-                {feedback.explanation}
-              </p>
-            )}
+            <div className="rounded-lg bg-slate-950/70 border border-white/10 px-3 py-2 text-xs text-slate-200 leading-relaxed">
+              <span className="font-bold text-amber-300">Pembahasan: </span>
+              <span>
+                {(feedback.explanation && feedback.explanation.trim()) ||
+                (question.explanation && question.explanation.trim())
+                  ? (feedback.explanation || question.explanation || '').trim()
+                  : `Kata kunci jawaban yang benar adalah "${feedback.correctKey}".`}
+              </span>
+            </div>
             <div className="flex items-center justify-between gap-3 pt-2 flex-wrap border-t border-white/10">
               <div className="inline-flex items-center gap-1.5 text-[11px] text-amber-300 font-medium font-mono-num tabular-nums">
                 <Clock className="w-3.5 h-3.5 shrink-0" />

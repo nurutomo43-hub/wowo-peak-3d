@@ -27,11 +27,14 @@ export const QuizModal: React.FC<QuizModalProps> = ({
 }) => {
   const pct = Math.max(0, Math.min(100, (timeLeft / Math.max(1, totalDuration)) * 100));
   const isCorrect = answered && chosenLetter === question.answer;
-  const hasExp = Boolean(question.explanation && question.explanation.trim());
+  const explanationText =
+    question.explanation && question.explanation.trim()
+      ? question.explanation.trim()
+      : `Jawaban yang benar adalah pilihan ${question.answer}: "${question.options[question.answer]}".`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80">
-      <div className="w-full max-w-xl rounded-2xl bg-slate-900 border border-sky-400/40 p-6 shadow-2xl space-y-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 pointer-events-auto">
+      <div className="w-full max-w-xl max-h-[85dvh] overflow-y-auto overscroll-contain touch-pan-y rounded-2xl bg-slate-900 border border-sky-400/40 p-4 sm:p-6 pb-6 shadow-2xl space-y-3 sm:space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs font-mono-num font-bold text-sky-400 tracking-wider">
             CHECKPOINT {cpIndex} / 25 · ZONA AMAN
@@ -89,17 +92,15 @@ export const QuizModal: React.FC<QuizModalProps> = ({
               }`}
             >
               {isCorrect
-                ? 'Jawaban Benar — Poin ditambahkan!'
+                ? 'Jawaban Tepat! — Poin ditambahkan!'
                 : chosenLetter
                   ? `Jawaban Belum Tepat · Kunci Jawaban: ${question.answer}`
                   : `Waktu Habis · Kunci Jawaban: ${question.answer}`}
             </div>
-            {hasExp && (
-              <p className="text-sm text-slate-300 leading-relaxed">
-                <span className="font-semibold text-slate-200">Pembahasan: </span>
-                {question.explanation}
-              </p>
-            )}
+            <div className="rounded-lg bg-slate-900/90 border border-sky-500/25 px-3 py-2.5 text-sm text-slate-200 leading-relaxed">
+              <span className="font-bold text-sky-300">Pembahasan: </span>
+              <span>{explanationText}</span>
+            </div>
             <div className="flex items-center justify-between gap-3 pt-1 flex-wrap border-t border-white/10">
               <div className="inline-flex items-center gap-1.5 text-xs text-sky-300 font-medium font-mono-num tabular-nums">
                 <Clock className="w-3.5 h-3.5 shrink-0" />

@@ -5,6 +5,7 @@ import { MountainWorld, CP_POINTS, SUMMIT_EXAM_POINT } from './game/MountainWorl
 import { SoundEngine } from './game/SoundEngine';
 import {
   DEFAULT_ESSAY_QUESTIONS,
+  buildStudentEssayDeck,
   buildStudentQuizDeck,
   clearCustomEssayFromStorage,
   clearCustomPgFromStorage,
@@ -14,7 +15,11 @@ import {
   saveCustomEssayToStorage,
   saveCustomPgToStorage,
 } from './game/questions';
-import { normalizeAvatarConfig, type R15JointRig } from './game/AvatarBuilder';
+import {
+  disposeAvatarGroup,
+  normalizeAvatarConfig,
+  type R15JointRig,
+} from './game/AvatarBuilder';
 import { LobbyModal } from './components/LobbyModal';
 import { GameHud } from './components/GameHud';
 import { QuizModal } from './components/QuizModal';
@@ -24,6 +29,7 @@ import { ClassLobbyModal } from './components/ClassLobbyModal';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import {
   buildSupabaseRoomConfig,
+  createEventId,
   createRoomRealtimeChannel,
   fetchSupabaseRoomConfig,
   fetchSupabaseRoomRecord,
@@ -33,8 +39,9 @@ import {
   getHostPublicRoomState,
   getSupabaseConfigError,
   mergeConfigStudentsIntoHostRoom,
+  publishRoomCommandToSupabase,
   sendRoomBroadcast,
-  sendTriggerDisasterBroadcast,
+  sendRoomCommandBroadcast,
   syncStudentProgressToRoomPlayers,
   upsertSupabaseRoom,
   type HostRoomState,
@@ -65,6 +72,7 @@ import {
   type QuizQuestion,
   type RemotePlayerPayload,
   type Role,
+  type RoomCommandPayload,
   type RoomSettings,
   type RoomStatus,
   type ShuffledQuestion,
@@ -130,6 +138,11 @@ export function App() {
   const roomPersistTimerRef = useRef<number | null>(null);
   const remainingSecRef = useRef(20 * 60);
   const timeoutFallbackRef = useRef<number | null>(null);
+  const lastHandledEventIdRef = useRef<string>('');
+  const handledEventIdsRef = useRef<Set<string>>(new Set());
+  const intentionalDisconnectRef = useRef(false);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const heartbeatTimerRef = useRef<number | null>(null);
 
   // Lobby & session UI state
   const [role, setRole] = useState<Role>('student');
@@ -498,7 +511,7 @@ export function App() {
     ) {
       return;
     }
-    g.vel.y = 11.4;
+    g.vel.y = 12.2;
     g.onGround = false;
     soundRef.current?.playJump();
   }, []);
@@ -525,6 +538,7 @@ export function App() {
     if (!world || !g.inGame) return;
     if (g.playerMesh) {
       world.scene.remove(g.playerMesh);
+      disposeAvatarGroup(g.playerMesh);
     }
     g.playerMesh = world.createAvatarMesh(g.avatar, g.name, g.role, g.currentCP, g.score, true);
     g.headLamp = new THREE.PointLight('#fef08a', 0, 26);
@@ -611,7 +625,7 @@ export function App() {
       if (!g.activeQuiz || g.activeQuiz.answered) return;
       g.activeQuiz.answered = true;
       g.activeQuiz.chosenLetter = chosenLetter || null;
-      g.activeQuiz.explainTimeLeft = Math.min(60, Math.max(40, g.explanationDurationSec || 45));
+      g.activeQuiz.explainTimeLeft = Math.min(60, Math.max(5, g.explanationDurationSec || 45));
 
       const { cpIndex, question, timeLeft, totalDuration, startTimeMs } = g.activeQuiz;
       const isCorrect = chosenLetter === question.answer;
@@ -684,7 +698,7 @@ export function App() {
         answered: false,
         chosenLetter: null,
         startTimeMs: performance.now(),
-        explainTimeLeft: Math.min(60, Math.max(40, g.explanationDurationSec || 45)),
+        explainTimeLeft: Math.min(60, Math.max(5, g.explanationDurationSec || 45)),
       };
       g.activeQuiz = quizObj;
       setActiveQuiz({ ...quizObj });
@@ -708,7 +722,7 @@ export function App() {
         5.5,
       );
     } else {
-      const dur = Math.min(60, Math.max(40, g.explanationDurationSec || 45));
+      const dur = Math.min(60, Math.max(5, g.explanationDurationSec || 45));
       setActiveEssayModal((curr) =>
         curr
           ? {
@@ -734,11 +748,19 @@ export function App() {
     ) {
       return;
     }
-    const questions =
+    const baseQuestions =
       g.essayQuestions && g.essayQuestions.length > 0
         ? g.essayQuestions
         : DEFAULT_ESSAY_QUESTIONS;
-    const startIdx = Math.min(questions.length - 1, g.essayAnswers.length);
+    const questions = buildStudentEssayDeck(baseQuestions, g.roomCode, g.clientId);
+    g.essayQuestions = questions;
+    const firstUnansweredIdx = questions.findIndex(
+      (q) => !g.essayAnswers.some((ans) => ans.no === q.no),
+    );
+    const startIdx =
+      firstUnansweredIdx >= 0
+        ? firstUnansweredIdx
+        : Math.min(questions.length - 1, g.essayAnswers.length);
     soundRef.current?.playCheckpoint();
     g.vel.set(0, 0, 0);
     g.essayActive = true;
@@ -749,7 +771,7 @@ export function App() {
       questions,
       currentIndex: startIdx,
       startTimeMs: performance.now(),
-      explainTimeLeft: Math.min(60, Math.max(40, g.explanationDurationSec || 45)),
+      explainTimeLeft: Math.min(60, Math.max(5, g.explanationDurationSec || 45)),
       feedback: null,
     });
   }, []);
@@ -796,7 +818,7 @@ export function App() {
         newEssayAnswer,
       });
 
-      const explainDur = Math.min(60, Math.max(40, g.explanationDurationSec || 45));
+      const explainDur = Math.min(60, Math.max(5, g.explanationDurationSec || 45));
       g.essayFeedbackOpen = true;
       g.essayExplainLeft = explainDur;
       g.essayIsLastPending = isLast;
@@ -854,13 +876,13 @@ export function App() {
       const normalized: RoomSettings = {
         timeOfDay: s.timeOfDay || 'pagi',
         weather: s.weather || 'cerah',
-        quizDuration: s.quizDuration || 30,
+        quizDuration: Math.min(60, Math.max(5, Number(s.quizDuration) || 30)),
         difficultyLevel: s.difficultyLevel || 3,
         respawnMode: s.respawnMode || 'last_cp',
         pgWeight: s.pgWeight || 75,
         essayWeight: s.essayWeight || 25,
         sessionDurationMinutes: s.sessionDurationMinutes || 20,
-        explanationDurationSec: s.explanationDurationSec || 45,
+        explanationDurationSec: Math.min(60, Math.max(5, Number(s.explanationDurationSec) || 45)),
       };
       setSettings(normalized);
       gameRef.current.quizDuration = normalized.quizDuration;
@@ -919,6 +941,7 @@ export function App() {
         const pos = existing.mesh.position.clone();
         const rotY = existing.mesh.rotation.y;
         world.scene.remove(existing.mesh);
+        disposeAvatarGroup(existing.mesh);
         const newMesh = world.createAvatarMesh(
           cleanAvatar,
           p.name || existing.name,
@@ -957,6 +980,7 @@ export function App() {
     const entry = world.remotePlayers.get(id);
     if (entry) {
       world.scene.remove(entry.mesh);
+      disposeAvatarGroup(entry.mesh);
       world.remotePlayers.delete(id);
     }
   }, []);
@@ -975,10 +999,14 @@ export function App() {
       g.roomCode = roomState.roomCode;
       g.roomStatus = roomState.status || 'started';
       g.paused = Boolean(roomState.paused);
-      g.essayQuestions =
+      const baseEssay =
         essayQuestionsFromServer && essayQuestionsFromServer.length > 0
           ? essayQuestionsFromServer
           : DEFAULT_ESSAY_QUESTIONS;
+      g.essayQuestions =
+        g.role === 'student'
+          ? buildStudentEssayDeck(baseEssay, g.roomCode, g.clientId)
+          : baseEssay;
 
       setInGame(true);
       setRoomCode(roomState.roomCode);
@@ -1007,6 +1035,7 @@ export function App() {
 
       if (g.playerMesh) {
         world.scene.remove(g.playerMesh);
+        disposeAvatarGroup(g.playerMesh);
       }
       g.playerMesh = world.createAvatarMesh(g.avatar, g.name, g.role, g.currentCP, g.score, true);
       g.headLamp = new THREE.PointLight('#fef08a', 0, 26);
@@ -1137,7 +1166,16 @@ export function App() {
   );
 
   const cleanupChannel = useCallback(() => {
+    intentionalDisconnectRef.current = true;
     clearAllDisasterTimers();
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (heartbeatTimerRef.current) {
+      window.clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
+    }
     if (timeoutFallbackRef.current) {
       window.clearTimeout(timeoutFallbackRef.current);
       timeoutFallbackRef.current = null;
@@ -1158,6 +1196,8 @@ export function App() {
     pendingProgressSyncRef.current = false;
     remotePlayersRef.current.clear();
     lastSentPoseRef.current = null;
+    lastHandledEventIdRef.current = '';
+    handledEventIdsRef.current.clear();
     hostRoomRef.current = null;
   }, [clearAllDisasterTimers]);
 
@@ -1288,59 +1328,276 @@ export function App() {
     [applyRoomSettings, showWarning],
   );
 
-  const subscribeRoomChannel = useCallback(
-    (code: string) => {
-      if (channelRef.current) {
-        try {
-          void channelRef.current.unsubscribe();
-        } catch {
-          // ignore
-        }
-        channelRef.current = null;
+  const handleIncomingRoomCommand = useCallback(
+    (cmd: RoomCommandPayload | null | undefined, fromDatabase = false) => {
+      if (!cmd || typeof cmd !== 'object' || !cmd.type || !cmd.eventId) return;
+      if (
+        lastHandledEventIdRef.current === cmd.eventId ||
+        handledEventIdsRef.current.has(cmd.eventId)
+      ) {
+        return;
       }
 
-      isChannelSubscribedRef.current = false;
-      const channel = createRoomRealtimeChannel(code);
-      channelRef.current = channel;
+      const cur = gameRef.current;
+      if (cur.role !== 'student' || cur.sessionEnded) return;
 
-      const syncPresenceParticipants = () => {
-        const cur = gameRef.current;
-        const pState = channel.presenceState<RoomPresencePayload>();
-        const presentStudents = new Map<string, RoomPresencePayload>();
+      const durMs = typeof cmd.duration === 'number' && cmd.duration > 0 ? cmd.duration : 5000;
+      const ageMs = typeof cmd.triggeredAt === 'number' ? Date.now() - cmd.triggeredAt : 0;
 
-        for (const entries of Object.values(pState)) {
-          if (!Array.isArray(entries)) continue;
-          for (const item of entries) {
-            if (!item || !item.id || item.role !== 'student') continue;
-            presentStudents.set(item.id, item);
+      const recordHandled = () => {
+        lastHandledEventIdRef.current = cmd.eventId;
+        if (handledEventIdsRef.current.size > 200) {
+          handledEventIdsRef.current.clear();
+        }
+        handledEventIdsRef.current.add(cmd.eventId);
+      };
+
+      if (cmd.type === 'start_expedition') {
+        recordHandled();
+        activateExpeditionOnStudent(
+          cmd.remainingSec,
+          cmd.sessionEndsAt,
+          cmd.settings,
+          cmd.participants,
+        );
+        return;
+      }
+
+      if (cmd.type === 'pause_class') {
+        recordHandled();
+        if (cur.roomStatus === 'waiting') {
+          activateExpeditionOnStudent(cmd.remainingSec, cmd.sessionEndsAt, cmd.settings);
+        }
+        const nextPaused = Boolean(cmd.paused);
+        cur.paused = nextPaused;
+        setPaused(nextPaused);
+        if (typeof cmd.remainingSec === 'number') {
+          const rem = Math.max(0, Math.round(cmd.remainingSec));
+          remainingSecRef.current = rem;
+          setRemainingSec(rem);
+        }
+        showWarning(
+          nextPaused
+            ? 'KELAS DIJEDA SEMENTARA OLEH GURU!'
+            : 'KELAS DILANJUTKAN! Teruskan pendakian ke puncak!',
+          3.0,
+        );
+        return;
+      }
+
+      if (cmd.type === 'end_session') {
+        recordHandled();
+        applySessionEnded(cmd.reason ?? 'teacher', cmd.leaderboard, cmd.exportRows);
+        return;
+      }
+
+      // Event bencana / horor berdurasi 5 detik: abaikan jika sudah kedaluwarsa dari DB
+      if (fromDatabase && ageMs > durMs + 2500) {
+        recordHandled();
+        return;
+      }
+
+      recordHandled();
+      const remainingDurationMs = fromDatabase && ageMs > 0 ? Math.max(1200, durMs - ageMs) : durMs;
+      handleTeacherEvent(cmd.type as DisasterEventType, {
+        durationMs: remainingDurationMs,
+        timestamp: cmd.triggeredAt,
+        count: cmd.count,
+        offsets: cmd.offsets,
+      });
+    },
+    [activateExpeditionOnStudent, applySessionEnded, handleTeacherEvent, showWarning],
+  );
+
+  const channelCallbacksRef = useRef({
+    activateExpeditionOnStudent,
+    applyRoomSettings,
+    applySessionEnded,
+    clearStudentSession,
+    emitStudentProgress,
+    handleIncomingRoomCommand,
+    handleTeacherEvent,
+    removeRemotePlayer,
+    scheduleTeacherRoomPersist,
+    showWarning,
+    triggerLightningFlash,
+    upsertRemotePlayer,
+  });
+  channelCallbacksRef.current = {
+    activateExpeditionOnStudent,
+    applyRoomSettings,
+    applySessionEnded,
+    clearStudentSession,
+    emitStudentProgress,
+    handleIncomingRoomCommand,
+    handleTeacherEvent,
+    removeRemotePlayer,
+    scheduleTeacherRoomPersist,
+    showWarning,
+    triggerLightningFlash,
+    upsertRemotePlayer,
+  };
+
+  const subscribeRoomChannel = useCallback((code: string) => {
+    intentionalDisconnectRef.current = false;
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (channelRef.current) {
+      try {
+        void channelRef.current.unsubscribe();
+      } catch {
+        // ignore
+      }
+      channelRef.current = null;
+    }
+
+    isChannelSubscribedRef.current = false;
+    const channel = createRoomRealtimeChannel(code);
+    channelRef.current = channel;
+
+    const syncPresenceParticipants = () => {
+      const cb = channelCallbacksRef.current;
+      const cur = gameRef.current;
+      const pState = channel.presenceState<RoomPresencePayload>();
+      const presentStudents = new Map<string, RoomPresencePayload>();
+
+      for (const entries of Object.values(pState)) {
+        if (!Array.isArray(entries)) continue;
+        for (const item of entries) {
+          if (!item || !item.id || item.role !== 'student') continue;
+          presentStudents.set(item.id, item);
+        }
+      }
+
+      if (cur.role === 'teacher' && hostRoomRef.current) {
+        const room = hostRoomRef.current;
+        let changed = false;
+
+        for (const [sid, p] of presentStudents.entries()) {
+          if (room.kickedIds.has(sid)) continue;
+          let existing = room.students.get(sid);
+          const cleanName = sanitizeName(p.name) || 'Pendaki';
+          if (!existing) {
+            const lowerName = cleanName.toLowerCase();
+            for (const candidate of room.students.values()) {
+              if (candidate.name.trim().toLowerCase() === lowerName) {
+                existing = candidate;
+                break;
+              }
+            }
+          }
+          const cleanAv = normalizeAvatarConfig(p.avatar, 'student');
+          if (!existing) {
+            room.students.set(sid, {
+              id: sid,
+              name: cleanName,
+              avatar: cleanAv,
+              currentCP: Math.min(25, Math.max(0, p.cp ?? 0)),
+              completedCPs: [],
+              score: p.score ?? 0,
+              correctCount: p.pgCorrect ?? 0,
+              wrongCount: 0,
+              essayCorrect: p.isianCorrect ?? 0,
+              essayWrong: 0,
+              essayDone: Boolean(p.isianDone),
+              fallCount: p.falls ?? 0,
+              answers: [],
+              essayAnswers: [],
+              online: true,
+              lastSeenAt: Date.now(),
+              pose: { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: p.cp ?? 0, state: 'idle' },
+            });
+            changed = true;
+          } else {
+            if (!existing.online) {
+              existing.online = true;
+              changed = true;
+            }
+            existing.lastSeenAt = Date.now();
+            if (p.avatar && JSON.stringify(p.avatar) !== JSON.stringify(existing.avatar)) {
+              existing.avatar = cleanAv;
+              changed = true;
+            }
+            if (typeof p.cp === 'number' && p.cp > existing.currentCP) {
+              existing.currentCP = Math.min(25, p.cp);
+              changed = true;
+            }
+            if (typeof p.score === 'number' && p.score > existing.score) {
+              existing.score = p.score;
+              changed = true;
+            }
+            if (typeof p.pgCorrect === 'number' && p.pgCorrect > existing.correctCount) {
+              existing.correctCount = p.pgCorrect;
+              changed = true;
+            }
+            if (typeof p.isianCorrect === 'number' && p.isianCorrect > existing.essayCorrect) {
+              existing.essayCorrect = p.isianCorrect;
+              changed = true;
+            }
+            if (typeof p.falls === 'number' && p.falls > existing.fallCount) {
+              existing.fallCount = p.falls;
+              changed = true;
+            }
+            if (p.isianDone && !existing.essayDone) {
+              existing.essayDone = true;
+              changed = true;
+            }
           }
         }
 
-        if (cur.role === 'teacher' && hostRoomRef.current) {
-          const room = hostRoomRef.current;
-          let changed = false;
-
-          for (const [sid, p] of presentStudents.entries()) {
-            if (room.kickedIds.has(sid)) continue;
-            let existing = room.students.get(sid);
-            const cleanName = sanitizeName(p.name) || 'Pendaki';
-            if (!existing) {
-              const lowerName = cleanName.toLowerCase();
-              for (const candidate of room.students.values()) {
-                if (candidate.name.trim().toLowerCase() === lowerName) {
-                  existing = candidate;
-                  break;
-                }
-              }
+        for (const [sid, stu] of room.students.entries()) {
+          if (stu.online && !presentStudents.has(sid)) {
+            if (Date.now() - stu.lastSeenAt > 10000) {
+              stu.online = false;
+              changed = true;
             }
+          }
+        }
+
+        if (changed) {
+          const snap = getHostParticipantsSnapshot(room.students);
+          setParticipants(snap);
+          sendRoomBroadcast(channelRef.current, {
+            type: 'participants_update',
+            participants: snap,
+            status: room.status,
+          });
+          cb.scheduleTeacherRoomPersist();
+        }
+      } else if (cur.role === 'student') {
+        setParticipants((prev) => {
+          const byId = new Map(prev.map((item) => [item.id, item]));
+          for (const [sid, p] of presentStudents.entries()) {
+            const prevItem = byId.get(sid);
             const cleanAv = normalizeAvatarConfig(p.avatar, 'student');
-            if (!existing) {
-              room.students.set(sid, {
+            if (prevItem) {
+              byId.set(sid, {
+                ...prevItem,
+                name: sanitizeName(p.name) || prevItem.name,
+                avatar: cleanAv,
+                currentCP: typeof p.cp === 'number' ? Math.max(prevItem.currentCP, p.cp) : prevItem.currentCP,
+                score: typeof p.score === 'number' ? Math.max(prevItem.score, p.score) : prevItem.score,
+                correctCount:
+                  typeof p.pgCorrect === 'number'
+                    ? Math.max(prevItem.correctCount, p.pgCorrect)
+                    : prevItem.correctCount,
+                essayCorrect:
+                  typeof p.isianCorrect === 'number'
+                    ? Math.max(prevItem.essayCorrect, p.isianCorrect)
+                    : prevItem.essayCorrect,
+                fallCount:
+                  typeof p.falls === 'number' ? Math.max(prevItem.fallCount, p.falls) : prevItem.fallCount,
+                essayDone: prevItem.essayDone || Boolean(p.isianDone),
+                online: true,
+              });
+            } else {
+              byId.set(sid, {
                 id: sid,
-                name: cleanName,
+                name: sanitizeName(p.name) || 'Pendaki',
                 avatar: cleanAv,
                 currentCP: Math.min(25, Math.max(0, p.cp ?? 0)),
-                completedCPs: [],
                 score: p.score ?? 0,
                 correctCount: p.pgCorrect ?? 0,
                 wrongCount: 0,
@@ -1348,558 +1605,520 @@ export function App() {
                 essayWrong: 0,
                 essayDone: Boolean(p.isianDone),
                 fallCount: p.falls ?? 0,
-                answers: [],
-                essayAnswers: [],
                 online: true,
-                lastSeenAt: Date.now(),
-                pose: { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: p.cp ?? 0, state: 'idle' },
+                finished: false,
               });
-              changed = true;
-            } else {
-              if (!existing.online) {
-                existing.online = true;
-                changed = true;
-              }
-              existing.lastSeenAt = Date.now();
-              if (p.avatar && JSON.stringify(p.avatar) !== JSON.stringify(existing.avatar)) {
-                existing.avatar = cleanAv;
-                changed = true;
-              }
-              if (typeof p.cp === 'number' && p.cp > existing.currentCP) {
-                existing.currentCP = Math.min(25, p.cp);
-                changed = true;
-              }
-              if (typeof p.score === 'number' && p.score > existing.score) {
-                existing.score = p.score;
-                changed = true;
-              }
-              if (typeof p.pgCorrect === 'number' && p.pgCorrect > existing.correctCount) {
-                existing.correctCount = p.pgCorrect;
-                changed = true;
-              }
-              if (typeof p.isianCorrect === 'number' && p.isianCorrect > existing.essayCorrect) {
-                existing.essayCorrect = p.isianCorrect;
-                changed = true;
-              }
-              if (typeof p.falls === 'number' && p.falls > existing.fallCount) {
-                existing.fallCount = p.falls;
-                changed = true;
-              }
-              if (p.isianDone && !existing.essayDone) {
-                existing.essayDone = true;
-                changed = true;
-              }
             }
           }
+          return Array.from(byId.values());
+        });
+      }
+    };
 
-          for (const [sid, stu] of room.students.entries()) {
-            if (stu.online && !presentStudents.has(sid)) {
-              if (Date.now() - stu.lastSeenAt > 10000) {
-                stu.online = false;
-                changed = true;
-              }
+    const findStudentByIdOrName = (room: HostRoomState, id?: string, rawName?: string) => {
+      if (id) {
+        const byId = room.students.get(id);
+        if (byId) return byId;
+      }
+      const normalized = sanitizeName(rawName || '').toLowerCase();
+      if (normalized) {
+        for (const stu of room.students.values()) {
+          if (stu.name.trim().toLowerCase() === normalized) {
+            return stu;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    // Jalur 1: Supabase Broadcast instan (event: 'room_command')
+    channel.on('broadcast', { event: 'room_command' }, ({ payload }) => {
+      channelCallbacksRef.current.handleIncomingRoomCommand(payload as RoomCommandPayload, false);
+    });
+
+    // Jalur 2: Postgres Changes pada tabel rooms (anti-missed packet saat jaringan tersendat)
+    channel.on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'rooms',
+        filter: `code=eq.${code}`,
+      },
+      (payload) => {
+        const cb = channelCallbacksRef.current;
+        const cur = gameRef.current;
+        if (cur.role !== 'student' || cur.sessionEnded) return;
+        const newRow = (payload.new ?? null) as {
+          active_event?: RoomCommandPayload | null;
+          config?: {
+            status?: RoomStatus;
+            paused?: boolean;
+            sessionEnded?: boolean;
+            endReason?: 'teacher' | 'timeout';
+            remainingSec?: number;
+            sessionEndsAt?: number | null;
+            settings?: RoomSettings;
+            active_event?: RoomCommandPayload | null;
+          } | null;
+        } | null;
+        if (!newRow) return;
+
+        const incomingCmd = newRow.active_event ?? newRow.config?.active_event ?? null;
+        if (incomingCmd) {
+          cb.handleIncomingRoomCommand(incomingCmd, true);
+        }
+
+        const cfg = newRow.config;
+        if (!cfg) return;
+        if (cfg.settings) {
+          cb.applyRoomSettings(cfg.settings);
+        }
+        if (cfg.status === 'started' && cur.roomStatus === 'waiting') {
+          cb.activateExpeditionOnStudent(cfg.remainingSec, cfg.sessionEndsAt, cfg.settings);
+        }
+        if (typeof cfg.paused === 'boolean' && cfg.paused !== cur.paused) {
+          cur.paused = cfg.paused;
+          setPaused(cfg.paused);
+        }
+        if (cfg.sessionEnded && !cur.sessionEnded) {
+          cb.applySessionEnded(cfg.endReason ?? 'teacher');
+        }
+      },
+    );
+
+    channel.on('broadcast', { event: 'trigger_disaster' }, ({ payload }) => {
+      const data = payload as TriggerDisasterPayload | undefined;
+      if (!data || typeof data !== 'object' || !data.type) return;
+      const cur = gameRef.current;
+      if (cur.role !== 'student') return;
+      channelCallbacksRef.current.handleTeacherEvent(data.type, {
+        durationMs: typeof data.duration === 'number' ? data.duration : 5000,
+        timestamp: data.timestamp,
+        count: data.count,
+        offsets: data.offsets,
+      });
+    });
+
+    channel.on('broadcast', { event: 'room_event' }, ({ payload }) => {
+      const cb = channelCallbacksRef.current;
+      const msg = payload as RoomBroadcastMessage;
+      if (!msg || typeof msg !== 'object' || !msg.type) return;
+      const cur = gameRef.current;
+      const world = worldRef.current;
+
+      // Posisi 3D hanya disimpan di useRef & diupdate ke Three.js agar tidak memicu re-render React
+      if (msg.type === 'position_update' || msg.type === 'player_pose') {
+        const rp = msg.payload;
+        if (!rp || !rp.id || rp.id === cur.clientId) return;
+        remotePlayersRef.current.set(rp.id, rp);
+        cb.upsertRemotePlayer(rp);
+
+        if (cur.role === 'teacher' && hostRoomRef.current && rp.role === 'student') {
+          const room = hostRoomRef.current;
+          if (!room.kickedIds.has(rp.id)) {
+            const stu = findStudentByIdOrName(room, rp.id, rp.name);
+            if (stu) {
+              stu.online = true;
+              stu.lastSeenAt = Date.now();
+              stu.pose = rp.pose;
             }
           }
+        }
+        return;
+      }
 
-          if (changed) {
-            const snap = getHostParticipantsSnapshot(room.students);
+      if (msg.type === 'student_join') {
+        if (cur.role !== 'teacher' || !hostRoomRef.current) return;
+        const room = hostRoomRef.current;
+        const studentId = msg.studentId;
+        if (!studentId) return;
+        if (room.kickedIds.has(studentId)) {
+          sendRoomBroadcast(channelRef.current, {
+            type: 'kicked',
+            targetId: studentId,
+            message: 'Anda telah dikeluarkan dari ruangan ini oleh Guru.',
+          });
+          return;
+        }
+
+        const cleanAvatar = normalizeAvatarConfig(msg.avatar, 'student');
+        const cleanName = sanitizeName(msg.name) || 'Pendaki';
+        let stu = findStudentByIdOrName(room, studentId, cleanName);
+        if (stu) {
+          if (stu.id !== studentId) {
+            room.students.delete(stu.id);
+            stu.id = studentId;
+            room.students.set(studentId, stu);
+          }
+          stu.online = true;
+          stu.lastSeenAt = Date.now();
+          stu.name = cleanName;
+          stu.avatar = cleanAvatar;
+          if (msg.currentCP > stu.currentCP) stu.currentCP = Math.min(25, msg.currentCP);
+          if (msg.score > stu.score) stu.score = msg.score;
+          if (msg.correctCount > stu.correctCount) stu.correctCount = msg.correctCount;
+          if (msg.wrongCount > stu.wrongCount) stu.wrongCount = msg.wrongCount;
+          if (msg.essayCorrect > stu.essayCorrect) stu.essayCorrect = msg.essayCorrect;
+          if (msg.essayWrong > stu.essayWrong) stu.essayWrong = msg.essayWrong;
+          if (msg.fallCount > stu.fallCount) stu.fallCount = msg.fallCount;
+          if (msg.completedCPs?.length > stu.completedCPs.length) stu.completedCPs = msg.completedCPs;
+          if (msg.essayDone) stu.essayDone = true;
+          stu.pose = msg.pose || stu.pose;
+        } else {
+          stu = {
+            id: studentId,
+            name: cleanName,
+            avatar: cleanAvatar,
+            currentCP: Math.min(25, Math.max(0, msg.currentCP || 0)),
+            completedCPs: Array.isArray(msg.completedCPs) ? msg.completedCPs : [],
+            score: msg.score || 0,
+            correctCount: msg.correctCount || 0,
+            wrongCount: msg.wrongCount || 0,
+            essayCorrect: msg.essayCorrect || 0,
+            essayWrong: msg.essayWrong || 0,
+            essayDone: Boolean(msg.essayDone),
+            fallCount: msg.fallCount || 0,
+            answers: Array.isArray(msg.answers) ? msg.answers : [],
+            essayAnswers: Array.isArray(msg.essayAnswers) ? msg.essayAnswers : [],
+            online: true,
+            lastSeenAt: Date.now(),
+            pose: msg.pose || { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: 0, state: 'idle' },
+          };
+          room.students.set(studentId, stu);
+        }
+
+        cb.upsertRemotePlayer({
+          id: stu.id,
+          role: 'student',
+          name: stu.name,
+          avatar: stu.avatar,
+          currentCP: stu.currentCP,
+          score: stu.score,
+          pose: stu.pose,
+        });
+        const snap = getHostParticipantsSnapshot(room.students);
+        setParticipants(snap);
+        sendRoomBroadcast(channelRef.current, {
+          type: 'participants_update',
+          participants: snap,
+          status: room.status,
+        });
+        sendRoomBroadcast(channelRef.current, { type: 'settings_updated', settings: room.settings });
+        if (room.status === 'started' && room.sessionEndsAt) {
+          sendRoomBroadcast(channelRef.current, {
+            type: 'game_start',
+            remainingSec: Math.max(0, Math.round(remainingSecRef.current)),
+            sessionEndsAt: room.sessionEndsAt,
+            settings: room.settings,
+            participants: snap,
+          });
+        } else {
+          sendRoomBroadcast(channelRef.current, {
+            type: 'pause_updated',
+            paused: room.paused,
+            remainingSec: Math.max(0, Math.round(remainingSecRef.current)),
+            status: room.status,
+          });
+        }
+        cb.scheduleTeacherRoomPersist();
+        return;
+      }
+
+      if (msg.type === 'player_progress' || msg.type === 'student_progress') {
+        if (cur.role !== 'teacher' || !hostRoomRef.current) return;
+        const room = hostRoomRef.current;
+        const senderId = msg.type === 'player_progress' ? msg.playerId || msg.id : msg.id;
+        if (!senderId || room.kickedIds.has(senderId)) return;
+
+        const payloadName = msg.type === 'player_progress' ? msg.name : undefined;
+        let stu = findStudentByIdOrName(room, senderId, payloadName);
+        if (!stu) {
+          const cachedRemote = remotePlayersRef.current.get(senderId);
+          stu = {
+            id: senderId,
+            name: sanitizeName(payloadName || cachedRemote?.name || '') || 'Pendaki',
+            avatar: cachedRemote?.avatar || { ...DEFAULT_STUDENT_AVATAR },
+            currentCP: 0,
+            completedCPs: [],
+            score: 0,
+            correctCount: 0,
+            wrongCount: 0,
+            essayCorrect: 0,
+            essayWrong: 0,
+            essayDone: false,
+            fallCount: 0,
+            answers: [],
+            essayAnswers: [],
+            online: true,
+            lastSeenAt: Date.now(),
+            pose: cachedRemote?.pose || { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: 0, state: 'idle' },
+          };
+          room.students.set(stu.id, stu);
+        }
+
+        stu.lastSeenAt = Date.now();
+        stu.online = true;
+
+        if (msg.type === 'player_progress') {
+          if (msg.name) stu.name = sanitizeName(msg.name) || stu.name;
+          if (typeof msg.cp === 'number') {
+            stu.currentCP = Math.min(25, Math.max(stu.currentCP, msg.cp));
+          }
+          if (typeof msg.pgCorrect === 'number') stu.correctCount = msg.pgCorrect;
+          if (typeof msg.pgWrong === 'number') stu.wrongCount = msg.pgWrong;
+          if (typeof msg.isianCorrect === 'number') stu.essayCorrect = msg.isianCorrect;
+          if (typeof msg.isianWrong === 'number') stu.essayWrong = msg.isianWrong;
+          if (typeof msg.isianDone === 'boolean') stu.essayDone = msg.isianDone;
+          if (typeof msg.score === 'number') stu.score = msg.score;
+          if (typeof msg.falls === 'number') stu.fallCount = msg.falls;
+          if (Array.isArray(msg.completedCPs)) stu.completedCPs = msg.completedCPs;
+        } else {
+          if (typeof msg.currentCP === 'number') {
+            stu.currentCP = Math.min(25, Math.max(stu.currentCP, msg.currentCP));
+          }
+          if (Array.isArray(msg.completedCPs)) stu.completedCPs = msg.completedCPs;
+          if (typeof msg.score === 'number') stu.score = msg.score;
+          if (typeof msg.correctCount === 'number') stu.correctCount = msg.correctCount;
+          if (typeof msg.wrongCount === 'number') stu.wrongCount = msg.wrongCount;
+          if (typeof msg.essayCorrect === 'number') stu.essayCorrect = msg.essayCorrect;
+          if (typeof msg.essayWrong === 'number') stu.essayWrong = msg.essayWrong;
+          if (typeof msg.essayDone === 'boolean') stu.essayDone = msg.essayDone;
+          if (typeof msg.fallCount === 'number') stu.fallCount = msg.fallCount;
+        }
+
+        if (msg.newAnswer && !stu.answers.some((a) => a.cp === msg.newAnswer!.cp)) {
+          stu.answers.push(msg.newAnswer);
+        }
+        if (msg.newEssayAnswer) {
+          const idx = stu.essayAnswers.findIndex((e) => e.no === msg.newEssayAnswer!.no);
+          if (idx >= 0) stu.essayAnswers[idx] = msg.newEssayAnswer;
+          else stu.essayAnswers.push(msg.newEssayAnswer);
+        }
+
+        cb.upsertRemotePlayer({
+          id: stu.id,
+          role: 'student',
+          name: stu.name,
+          avatar: stu.avatar,
+          currentCP: stu.currentCP,
+          score: stu.score,
+          pose: stu.pose,
+        });
+        const snap = getHostParticipantsSnapshot(room.students);
+        setParticipants(snap);
+        sendRoomBroadcast(channelRef.current, {
+          type: 'participants_update',
+          participants: snap,
+          status: room.status,
+        });
+        cb.scheduleTeacherRoomPersist();
+        return;
+      }
+
+      if (msg.type === 'update_avatar') {
+        if (msg.id === cur.clientId) return;
+        if (cur.role === 'teacher' && hostRoomRef.current) {
+          const stu = hostRoomRef.current.students.get(msg.id);
+          if (stu) {
+            stu.avatar = normalizeAvatarConfig(msg.avatar, 'student');
+            const snap = getHostParticipantsSnapshot(hostRoomRef.current.students);
             setParticipants(snap);
             sendRoomBroadcast(channelRef.current, {
               type: 'participants_update',
               participants: snap,
-              status: room.status,
-            });
-            scheduleTeacherRoomPersist();
-          }
-        } else if (cur.role === 'student') {
-          setParticipants((prev) => {
-            const byId = new Map(prev.map((item) => [item.id, item]));
-            for (const [sid, p] of presentStudents.entries()) {
-              const prevItem = byId.get(sid);
-              const cleanAv = normalizeAvatarConfig(p.avatar, 'student');
-              if (prevItem) {
-                byId.set(sid, {
-                  ...prevItem,
-                  name: sanitizeName(p.name) || prevItem.name,
-                  avatar: cleanAv,
-                  currentCP: typeof p.cp === 'number' ? Math.max(prevItem.currentCP, p.cp) : prevItem.currentCP,
-                  score: typeof p.score === 'number' ? Math.max(prevItem.score, p.score) : prevItem.score,
-                  correctCount:
-                    typeof p.pgCorrect === 'number'
-                      ? Math.max(prevItem.correctCount, p.pgCorrect)
-                      : prevItem.correctCount,
-                  essayCorrect:
-                    typeof p.isianCorrect === 'number'
-                      ? Math.max(prevItem.essayCorrect, p.isianCorrect)
-                      : prevItem.essayCorrect,
-                  fallCount:
-                    typeof p.falls === 'number' ? Math.max(prevItem.fallCount, p.falls) : prevItem.fallCount,
-                  essayDone: prevItem.essayDone || Boolean(p.isianDone),
-                  online: true,
-                });
-              } else {
-                byId.set(sid, {
-                  id: sid,
-                  name: sanitizeName(p.name) || 'Pendaki',
-                  avatar: cleanAv,
-                  currentCP: Math.min(25, Math.max(0, p.cp ?? 0)),
-                  score: p.score ?? 0,
-                  correctCount: p.pgCorrect ?? 0,
-                  wrongCount: 0,
-                  essayCorrect: p.isianCorrect ?? 0,
-                  essayWrong: 0,
-                  essayDone: Boolean(p.isianDone),
-                  fallCount: p.falls ?? 0,
-                  online: true,
-                  finished: false,
-                });
-              }
-            }
-            return Array.from(byId.values());
-          });
-        }
-      };
-
-      const findStudentByIdOrName = (room: HostRoomState, id?: string, rawName?: string) => {
-        if (id) {
-          const byId = room.students.get(id);
-          if (byId) return byId;
-        }
-        const normalized = sanitizeName(rawName || '').toLowerCase();
-        if (normalized) {
-          for (const stu of room.students.values()) {
-            if (stu.name.trim().toLowerCase() === normalized) {
-              return stu;
-            }
-          }
-        }
-        return undefined;
-      };
-
-      channel.on('broadcast', { event: 'trigger_disaster' }, ({ payload }) => {
-        const data = payload as TriggerDisasterPayload | undefined;
-        if (!data || typeof data !== 'object' || !data.type) return;
-        const cur = gameRef.current;
-        if (cur.role !== 'student') return;
-        handleTeacherEvent(data.type, {
-          durationMs: typeof data.duration === 'number' ? data.duration : 5000,
-          timestamp: data.timestamp,
-          count: data.count,
-          offsets: data.offsets,
-        });
-      });
-
-      channel.on('broadcast', { event: 'room_event' }, ({ payload }) => {
-        const msg = payload as RoomBroadcastMessage;
-        if (!msg || typeof msg !== 'object' || !msg.type) return;
-        const cur = gameRef.current;
-        const world = worldRef.current;
-
-        // Posisi 3D hanya disimpan di useRef & diupdate ke Three.js agar tidak memicu re-render React
-        if (msg.type === 'position_update' || msg.type === 'player_pose') {
-          const rp = msg.payload;
-          if (!rp || !rp.id || rp.id === cur.clientId) return;
-          remotePlayersRef.current.set(rp.id, rp);
-          upsertRemotePlayer(rp);
-
-          if (cur.role === 'teacher' && hostRoomRef.current && rp.role === 'student') {
-            const room = hostRoomRef.current;
-            if (!room.kickedIds.has(rp.id)) {
-              const stu = findStudentByIdOrName(room, rp.id, rp.name);
-              if (stu) {
-                stu.online = true;
-                stu.lastSeenAt = Date.now();
-                stu.pose = rp.pose;
-              }
-            }
-          }
-          return;
-        }
-
-        if (msg.type === 'student_join') {
-          if (cur.role !== 'teacher' || !hostRoomRef.current) return;
-          const room = hostRoomRef.current;
-          const studentId = msg.studentId;
-          if (!studentId) return;
-          if (room.kickedIds.has(studentId)) {
-            sendRoomBroadcast(channelRef.current, {
-              type: 'kicked',
-              targetId: studentId,
-              message: 'Anda telah dikeluarkan dari ruangan ini oleh Guru.',
-            });
-            return;
-          }
-
-          const cleanAvatar = normalizeAvatarConfig(msg.avatar, 'student');
-          const cleanName = sanitizeName(msg.name) || 'Pendaki';
-          let stu = findStudentByIdOrName(room, studentId, cleanName);
-          if (stu) {
-            if (stu.id !== studentId) {
-              room.students.delete(stu.id);
-              stu.id = studentId;
-              room.students.set(studentId, stu);
-            }
-            stu.online = true;
-            stu.lastSeenAt = Date.now();
-            stu.name = cleanName;
-            stu.avatar = cleanAvatar;
-            if (msg.currentCP > stu.currentCP) stu.currentCP = Math.min(25, msg.currentCP);
-            if (msg.score > stu.score) stu.score = msg.score;
-            if (msg.correctCount > stu.correctCount) stu.correctCount = msg.correctCount;
-            if (msg.wrongCount > stu.wrongCount) stu.wrongCount = msg.wrongCount;
-            if (msg.essayCorrect > stu.essayCorrect) stu.essayCorrect = msg.essayCorrect;
-            if (msg.essayWrong > stu.essayWrong) stu.essayWrong = msg.essayWrong;
-            if (msg.fallCount > stu.fallCount) stu.fallCount = msg.fallCount;
-            if (msg.completedCPs?.length > stu.completedCPs.length) stu.completedCPs = msg.completedCPs;
-            if (msg.essayDone) stu.essayDone = true;
-            stu.pose = msg.pose || stu.pose;
-          } else {
-            stu = {
-              id: studentId,
-              name: cleanName,
-              avatar: cleanAvatar,
-              currentCP: Math.min(25, Math.max(0, msg.currentCP || 0)),
-              completedCPs: Array.isArray(msg.completedCPs) ? msg.completedCPs : [],
-              score: msg.score || 0,
-              correctCount: msg.correctCount || 0,
-              wrongCount: msg.wrongCount || 0,
-              essayCorrect: msg.essayCorrect || 0,
-              essayWrong: msg.essayWrong || 0,
-              essayDone: Boolean(msg.essayDone),
-              fallCount: msg.fallCount || 0,
-              answers: Array.isArray(msg.answers) ? msg.answers : [],
-              essayAnswers: Array.isArray(msg.essayAnswers) ? msg.essayAnswers : [],
-              online: true,
-              lastSeenAt: Date.now(),
-              pose: msg.pose || { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: 0, state: 'idle' },
-            };
-            room.students.set(studentId, stu);
-          }
-
-          upsertRemotePlayer({
-            id: stu.id,
-            role: 'student',
-            name: stu.name,
-            avatar: stu.avatar,
-            currentCP: stu.currentCP,
-            score: stu.score,
-            pose: stu.pose,
-          });
-          const snap = getHostParticipantsSnapshot(room.students);
-          setParticipants(snap);
-          sendRoomBroadcast(channelRef.current, {
-            type: 'participants_update',
-            participants: snap,
-            status: room.status,
-          });
-          sendRoomBroadcast(channelRef.current, { type: 'settings_updated', settings: room.settings });
-          if (room.status === 'started' && room.sessionEndsAt) {
-            sendRoomBroadcast(channelRef.current, {
-              type: 'game_start',
-              remainingSec: Math.max(0, Math.round(remainingSecRef.current)),
-              sessionEndsAt: room.sessionEndsAt,
-              settings: room.settings,
-              participants: snap,
-            });
-          } else {
-            sendRoomBroadcast(channelRef.current, {
-              type: 'pause_updated',
-              paused: room.paused,
-              remainingSec: Math.max(0, Math.round(remainingSecRef.current)),
-              status: room.status,
+              status: hostRoomRef.current.status,
             });
           }
-          scheduleTeacherRoomPersist();
-          return;
         }
-
-        if (msg.type === 'player_progress' || msg.type === 'student_progress') {
-          if (cur.role !== 'teacher' || !hostRoomRef.current) return;
-          const room = hostRoomRef.current;
-          const senderId = msg.type === 'player_progress' ? msg.playerId || msg.id : msg.id;
-          if (!senderId || room.kickedIds.has(senderId)) return;
-
-          const payloadName = msg.type === 'player_progress' ? msg.name : undefined;
-          let stu = findStudentByIdOrName(room, senderId, payloadName);
-          if (!stu) {
-            const cachedRemote = remotePlayersRef.current.get(senderId);
-            stu = {
-              id: senderId,
-              name: sanitizeName(payloadName || cachedRemote?.name || '') || 'Pendaki',
-              avatar: cachedRemote?.avatar || { ...DEFAULT_STUDENT_AVATAR },
-              currentCP: 0,
-              completedCPs: [],
-              score: 0,
-              correctCount: 0,
-              wrongCount: 0,
-              essayCorrect: 0,
-              essayWrong: 0,
-              essayDone: false,
-              fallCount: 0,
-              answers: [],
-              essayAnswers: [],
-              online: true,
-              lastSeenAt: Date.now(),
-              pose: cachedRemote?.pose || { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: 0, state: 'idle' },
-            };
-            room.students.set(stu.id, stu);
-          }
-
-          stu.lastSeenAt = Date.now();
-          stu.online = true;
-
-          if (msg.type === 'player_progress') {
-            if (msg.name) stu.name = sanitizeName(msg.name) || stu.name;
-            if (typeof msg.cp === 'number') {
-              stu.currentCP = Math.min(25, Math.max(stu.currentCP, msg.cp));
-            }
-            if (typeof msg.pgCorrect === 'number') stu.correctCount = msg.pgCorrect;
-            if (typeof msg.pgWrong === 'number') stu.wrongCount = msg.pgWrong;
-            if (typeof msg.isianCorrect === 'number') stu.essayCorrect = msg.isianCorrect;
-            if (typeof msg.isianWrong === 'number') stu.essayWrong = msg.isianWrong;
-            if (typeof msg.isianDone === 'boolean') stu.essayDone = msg.isianDone;
-            if (typeof msg.score === 'number') stu.score = msg.score;
-            if (typeof msg.falls === 'number') stu.fallCount = msg.falls;
-            if (Array.isArray(msg.completedCPs)) stu.completedCPs = msg.completedCPs;
-          } else {
-            if (typeof msg.currentCP === 'number') {
-              stu.currentCP = Math.min(25, Math.max(stu.currentCP, msg.currentCP));
-            }
-            if (Array.isArray(msg.completedCPs)) stu.completedCPs = msg.completedCPs;
-            if (typeof msg.score === 'number') stu.score = msg.score;
-            if (typeof msg.correctCount === 'number') stu.correctCount = msg.correctCount;
-            if (typeof msg.wrongCount === 'number') stu.wrongCount = msg.wrongCount;
-            if (typeof msg.essayCorrect === 'number') stu.essayCorrect = msg.essayCorrect;
-            if (typeof msg.essayWrong === 'number') stu.essayWrong = msg.essayWrong;
-            if (typeof msg.essayDone === 'boolean') stu.essayDone = msg.essayDone;
-            if (typeof msg.fallCount === 'number') stu.fallCount = msg.fallCount;
-          }
-
-          if (msg.newAnswer && !stu.answers.some((a) => a.cp === msg.newAnswer!.cp)) {
-            stu.answers.push(msg.newAnswer);
-          }
-          if (msg.newEssayAnswer) {
-            const idx = stu.essayAnswers.findIndex((e) => e.no === msg.newEssayAnswer!.no);
-            if (idx >= 0) stu.essayAnswers[idx] = msg.newEssayAnswer;
-            else stu.essayAnswers.push(msg.newEssayAnswer);
-          }
-
-          upsertRemotePlayer({
-            id: stu.id,
-            role: 'student',
-            name: stu.name,
-            avatar: stu.avatar,
-            currentCP: stu.currentCP,
-            score: stu.score,
-            pose: stu.pose,
-          });
-          const snap = getHostParticipantsSnapshot(room.students);
-          setParticipants(snap);
-          sendRoomBroadcast(channelRef.current, {
-            type: 'participants_update',
-            participants: snap,
-            status: room.status,
-          });
-          scheduleTeacherRoomPersist();
-          return;
-        }
-
-        if (msg.type === 'update_avatar') {
-          if (msg.id === cur.clientId) return;
-          if (cur.role === 'teacher' && hostRoomRef.current) {
-            const stu = hostRoomRef.current.students.get(msg.id);
-            if (stu) {
-              stu.avatar = normalizeAvatarConfig(msg.avatar, 'student');
-              const snap = getHostParticipantsSnapshot(hostRoomRef.current.students);
-              setParticipants(snap);
-              sendRoomBroadcast(channelRef.current, {
-                type: 'participants_update',
-                participants: snap,
-                status: hostRoomRef.current.status,
-              });
-            }
-          }
-          if (world) {
-            const entry = world.remotePlayers.get(msg.id);
-            if (entry) {
-              entry.avatar = normalizeAvatarConfig(msg.avatar, entry.role);
-              const pos = entry.mesh.position.clone();
-              const rotY = entry.mesh.rotation.y;
-              world.scene.remove(entry.mesh);
-              const newMesh = world.createAvatarMesh(
-                entry.avatar,
-                entry.name,
-                entry.role,
-                entry.cp,
-                entry.score,
-                false,
-              );
-              newMesh.position.copy(pos);
-              newMesh.rotation.y = rotY;
-              world.scene.add(newMesh);
-              entry.mesh = newMesh;
-            }
-          }
-          return;
-        }
-
-        if (msg.type === 'player_emote') {
-          if (world && msg.id !== cur.clientId) {
-            const entry = world.remotePlayers.get(msg.id);
-            if (entry) {
-              entry.activeEmote = msg.emote;
-              entry.emoteTimer = 3.2;
-              world.showAvatarEmote(entry.mesh, entry.activeEmote);
-            }
-          }
-          return;
-        }
-
-        // Student-targeted Teacher broadcasts
-        if (cur.role !== 'student') return;
-
-        switch (msg.type) {
-          case 'game_start':
-            activateExpeditionOnStudent(
-              msg.remainingSec,
-              msg.sessionEndsAt,
-              msg.settings,
-              msg.participants,
+        if (world) {
+          const entry = world.remotePlayers.get(msg.id);
+          if (entry) {
+            entry.avatar = normalizeAvatarConfig(msg.avatar, entry.role);
+            const pos = entry.mesh.position.clone();
+            const rotY = entry.mesh.rotation.y;
+            world.scene.remove(entry.mesh);
+            disposeAvatarGroup(entry.mesh);
+            const newMesh = world.createAvatarMesh(
+              entry.avatar,
+              entry.name,
+              entry.role,
+              entry.cp,
+              entry.score,
+              false,
             );
-            break;
-
-          case 'participants_update':
-            setParticipants(msg.participants || []);
-            if (msg.status === 'started' && cur.roomStatus === 'waiting') {
-              activateExpeditionOnStudent(undefined, null, undefined, msg.participants);
-            }
-            break;
-
-          case 'settings_updated': {
-            const prevWeather = world?.weather;
-            const prevTime = world?.timeOfDay;
-            applyRoomSettings(msg.settings);
-            if (msg.settings.weather && msg.settings.weather !== prevWeather) {
-              if (msg.settings.weather === 'hujan') {
-                soundRef.current?.playSlideWhoosh();
-                showWarning('HUJAN LEBAT TURUN! Hati-hati jalur pendakian licin!', 3.2);
-              } else if (msg.settings.weather === 'berkabut') {
-                showWarning('KABUT TEBAL MENYELIMUTI GUNUNG! Jarak pandang terbatas!', 3.2);
-              } else if (msg.settings.weather === 'badai') {
-                triggerLightningFlash();
-                showWarning('BADAI PETIR MELANDA GUNUNG WOWO!', 3.4);
-              } else if (msg.settings.weather === 'salju') {
-                showWarning('HUJAN SALJU TURUN DI GUNUNG WOWO!', 3.2);
-              } else if (msg.settings.weather === 'kiamat') {
-                triggerLightningFlash();
-                showWarning('CUACA KIAMAT DIAKTIFKAN GURU! Waspada hujan meteor!', 3.5);
-              } else if (msg.settings.weather === 'cerah') {
-                showWarning('Cuaca gunung kembali cerah!', 2.5);
-              }
-            } else if (msg.settings.timeOfDay && msg.settings.timeOfDay !== prevTime) {
-              showWarning(`Waktu gunung diubah Guru menjadi ${msg.settings.timeOfDay.toUpperCase()}!`, 2.4);
-            }
-            break;
-          }
-
-          case 'questions_updated':
-            setQuestionCount(
-              Array.isArray(msg.questions) && msg.questions.length > 0 ? msg.questions.length : 25,
-            );
-            cur.studentDeck = buildStudentQuizDeck(msg.questions, cur.roomCode, cur.clientId);
-            showWarning('Bank soal PG diperbarui oleh Guru!', 2.5);
-            break;
-
-          case 'essay_questions_updated': {
-            const list =
-              Array.isArray(msg.essayQuestions) && msg.essayQuestions.length > 0
-                ? msg.essayQuestions
-                : DEFAULT_ESSAY_QUESTIONS;
-            cur.essayQuestions = list;
-            setEssayQuestionCount(list.length);
-            showWarning('Soal Isian Singkat Puncak diperbarui oleh Guru!', 2.5);
-            break;
-          }
-
-          case 'pause_updated':
-            if (msg.status === 'started' && cur.roomStatus === 'waiting') {
-              activateExpeditionOnStudent(msg.remainingSec);
-            }
-            cur.paused = Boolean(msg.paused);
-            setPaused(cur.paused);
-            if (typeof msg.remainingSec === 'number') {
-              const rem = Math.max(0, Math.round(msg.remainingSec));
-              remainingSecRef.current = rem;
-              setRemainingSec(rem);
-            }
-            break;
-
-          case 'timer_sync':
-            if (msg.status === 'started' && cur.roomStatus === 'waiting') {
-              activateExpeditionOnStudent(msg.remainingSec);
-            }
-            if (typeof msg.remainingSec === 'number') {
-              const rem = Math.max(0, Math.round(msg.remainingSec));
-              remainingSecRef.current = rem;
-              setRemainingSec(rem);
-              if (rem > 0 && timeoutFallbackRef.current) {
-                window.clearTimeout(timeoutFallbackRef.current);
-                timeoutFallbackRef.current = null;
-              }
-            }
-            if (typeof msg.paused === 'boolean') {
-              cur.paused = msg.paused;
-              setPaused(msg.paused);
-            }
-            break;
-
-          case 'teacher_event':
-            handleTeacherEvent(msg.eventType, {
-              durationMs: 5000,
-              count: msg.count,
-              offsets: msg.offsets,
-            });
-            break;
-
-          case 'kicked':
-            if (msg.targetId === cur.clientId) {
-              cur.sessionEnded = true;
-              cur.roomStatus = 'ended';
-              setRoomStatus('ended');
-              setShowClassLobby(false);
-              setSessionEnded(true);
-              clearStudentSession(cur.roomCode);
-              cleanupChannel();
-              setKickedMessage(msg.message || 'Anda telah dikeluarkan dari kelas oleh Guru.');
-            }
-            break;
-
-          case 'session_ended':
-            applySessionEnded(msg.reason, msg.leaderboard, msg.exportRows);
-            break;
-        }
-      });
-
-      channel.on('presence', { event: 'sync' }, syncPresenceParticipants);
-      channel.on('presence', { event: 'join' }, syncPresenceParticipants);
-      channel.on('presence', { event: 'leave' }, ({ leftPresences }) => {
-        if (Array.isArray(leftPresences)) {
-          for (const item of leftPresences as Array<{ id?: string }>) {
-            const leftId = item?.id;
-            if (!leftId || leftId === gameRef.current.clientId) continue;
-            remotePlayersRef.current.delete(leftId);
-            removeRemotePlayer(leftId);
+            newMesh.position.copy(pos);
+            newMesh.rotation.y = rotY;
+            world.scene.add(newMesh);
+            entry.mesh = newMesh;
           }
         }
-        syncPresenceParticipants();
-      });
+        return;
+      }
 
-      channel.subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          isChannelSubscribedRef.current = true;
-          const g = gameRef.current;
-          joinedAtRef.current = Date.now();
-          void channel.track({
+      if (msg.type === 'player_emote') {
+        if (world && msg.id !== cur.clientId) {
+          const entry = world.remotePlayers.get(msg.id);
+          if (entry) {
+            entry.activeEmote = msg.emote;
+            entry.emoteTimer = 3.2;
+            world.showAvatarEmote(entry.mesh, entry.activeEmote);
+          }
+        }
+        return;
+      }
+
+      // Student-targeted Teacher broadcasts
+      if (cur.role !== 'student') return;
+
+      switch (msg.type) {
+        case 'game_start':
+          cb.activateExpeditionOnStudent(
+            msg.remainingSec,
+            msg.sessionEndsAt,
+            msg.settings,
+            msg.participants,
+          );
+          break;
+
+        case 'participants_update':
+          setParticipants(msg.participants || []);
+          if (msg.status === 'started' && cur.roomStatus === 'waiting') {
+            cb.activateExpeditionOnStudent(undefined, null, undefined, msg.participants);
+          }
+          break;
+
+        case 'settings_updated': {
+          const prevWeather = world?.weather;
+          const prevTime = world?.timeOfDay;
+          cb.applyRoomSettings(msg.settings);
+          if (msg.settings.weather && msg.settings.weather !== prevWeather) {
+            if (msg.settings.weather === 'hujan') {
+              soundRef.current?.playSlideWhoosh();
+              cb.showWarning('HUJAN LEBAT TURUN! Hati-hati jalur pendakian licin!', 3.2);
+            } else if (msg.settings.weather === 'berkabut') {
+              cb.showWarning('KABUT TEBAL MENYELIMUTI GUNUNG! Jarak pandang terbatas!', 3.2);
+            } else if (msg.settings.weather === 'badai') {
+              cb.triggerLightningFlash();
+              cb.showWarning('BADAI PETIR MELANDA GUNUNG WOWO!', 3.4);
+            } else if (msg.settings.weather === 'salju') {
+              cb.showWarning('HUJAN SALJU TURUN DI GUNUNG WOWO!', 3.2);
+            } else if (msg.settings.weather === 'kiamat') {
+              cb.triggerLightningFlash();
+              cb.showWarning('CUACA KIAMAT DIAKTIFKAN GURU! Waspada hujan meteor!', 3.5);
+            } else if (msg.settings.weather === 'cerah') {
+              cb.showWarning('Cuaca gunung kembali cerah!', 2.5);
+            }
+          } else if (msg.settings.timeOfDay && msg.settings.timeOfDay !== prevTime) {
+            cb.showWarning(`Waktu gunung diubah Guru menjadi ${msg.settings.timeOfDay.toUpperCase()}!`, 2.4);
+          }
+          break;
+        }
+
+        case 'questions_updated':
+          setQuestionCount(
+            Array.isArray(msg.questions) && msg.questions.length > 0 ? msg.questions.length : 25,
+          );
+          cur.studentDeck = buildStudentQuizDeck(msg.questions, cur.roomCode, cur.clientId);
+          cb.showWarning('Bank soal PG diperbarui oleh Guru!', 2.5);
+          break;
+
+        case 'essay_questions_updated': {
+          const list =
+            Array.isArray(msg.essayQuestions) && msg.essayQuestions.length > 0
+              ? msg.essayQuestions
+              : DEFAULT_ESSAY_QUESTIONS;
+          cur.essayQuestions = buildStudentEssayDeck(list, cur.roomCode, cur.clientId);
+          setEssayQuestionCount(cur.essayQuestions.length);
+          cb.showWarning('Soal Isian Singkat Puncak diperbarui oleh Guru!', 2.5);
+          break;
+        }
+
+        case 'pause_updated':
+          if (msg.status === 'started' && cur.roomStatus === 'waiting') {
+            cb.activateExpeditionOnStudent(msg.remainingSec);
+          }
+          cur.paused = Boolean(msg.paused);
+          setPaused(cur.paused);
+          if (typeof msg.remainingSec === 'number') {
+            const rem = Math.max(0, Math.round(msg.remainingSec));
+            remainingSecRef.current = rem;
+            setRemainingSec(rem);
+          }
+          break;
+
+        case 'timer_sync':
+          if (msg.status === 'started' && cur.roomStatus === 'waiting') {
+            cb.activateExpeditionOnStudent(msg.remainingSec);
+          }
+          if (typeof msg.remainingSec === 'number') {
+            const rem = Math.max(0, Math.round(msg.remainingSec));
+            remainingSecRef.current = rem;
+            setRemainingSec(rem);
+            if (rem > 0 && timeoutFallbackRef.current) {
+              window.clearTimeout(timeoutFallbackRef.current);
+              timeoutFallbackRef.current = null;
+            }
+          }
+          if (typeof msg.paused === 'boolean') {
+            cur.paused = msg.paused;
+            setPaused(msg.paused);
+          }
+          break;
+
+        case 'teacher_event':
+          cb.handleTeacherEvent(msg.eventType, {
+            durationMs: 5000,
+            count: msg.count,
+            offsets: msg.offsets,
+          });
+          break;
+
+        case 'kicked':
+          if (msg.targetId === cur.clientId) {
+            cur.sessionEnded = true;
+            cur.roomStatus = 'ended';
+            setRoomStatus('ended');
+            setShowClassLobby(false);
+            setSessionEnded(true);
+            cb.clearStudentSession(cur.roomCode);
+            cleanupChannel();
+            setKickedMessage(msg.message || 'Anda telah dikeluarkan dari kelas oleh Guru.');
+          }
+          break;
+
+        case 'session_ended':
+          cb.applySessionEnded(msg.reason, msg.leaderboard, msg.exportRows);
+          break;
+      }
+    });
+
+    channel.on('presence', { event: 'sync' }, syncPresenceParticipants);
+    channel.on('presence', { event: 'join' }, syncPresenceParticipants);
+    channel.on('presence', { event: 'leave' }, ({ leftPresences }) => {
+      if (Array.isArray(leftPresences)) {
+        for (const item of leftPresences as Array<{ id?: string }>) {
+          const leftId = item?.id;
+          if (!leftId || leftId === gameRef.current.clientId) continue;
+          remotePlayersRef.current.delete(leftId);
+          channelCallbacksRef.current.removeRemotePlayer(leftId);
+        }
+      }
+      syncPresenceParticipants();
+    });
+
+    channel.subscribe((status) => {
+      const cb = channelCallbacksRef.current;
+      if (status === 'SUBSCRIBED') {
+        isChannelSubscribedRef.current = true;
+        if (reconnectTimerRef.current) {
+          window.clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
+        const g = gameRef.current;
+        joinedAtRef.current = Date.now();
+        void channel
+          .track({
             id: g.clientId,
             playerId: g.clientId,
             role: g.role,
@@ -1912,68 +2131,159 @@ export function App() {
             score: g.score,
             falls: g.fallCount,
             isianDone: g.essayDone,
-          } satisfies RoomPresencePayload);
-          if (g.role === 'student') {
-            sendRoomBroadcast(channel, {
-              type: 'student_join',
-              studentId: g.clientId,
-              name: g.name,
-              avatar: g.avatar,
-              currentCP: g.currentCP,
-              completedCPs: g.completedCPs,
-              score: g.score,
-              correctCount: g.correctCount,
-              wrongCount: g.wrongCount,
-              essayCorrect: g.essayCorrect,
-              essayWrong: g.essayWrong,
-              essayDone: g.essayDone,
-              fallCount: g.fallCount,
-              answers: g.answers,
-              essayAnswers: g.essayAnswers,
-              pose: {
-                x: Number(g.pos.x.toFixed(2)),
-                y: Number(g.pos.y.toFixed(2)),
-                z: Number(g.pos.z.toFixed(2)),
-                yaw: Number(g.yaw.toFixed(2)),
-                cp: g.currentCP,
-                state: g.lastPoseState,
-              },
-            });
-            if (pendingProgressSyncRef.current) {
-              pendingProgressSyncRef.current = false;
-              emitStudentProgress();
-            }
-          }
-        } else if (status === 'CHANNEL_ERROR' || status === 'CLOSED') {
-          isChannelSubscribedRef.current = false;
-          if (status === 'CHANNEL_ERROR') {
-            showWarning('Koneksi Supabase Realtime terganggu sementara, mencoba pulihkan...', 3.5);
+          } satisfies RoomPresencePayload)
+          .catch(() => {});
+        if (g.role === 'student') {
+          sendRoomBroadcast(channel, {
+            type: 'student_join',
+            studentId: g.clientId,
+            name: g.name,
+            avatar: g.avatar,
+            currentCP: g.currentCP,
+            completedCPs: g.completedCPs,
+            score: g.score,
+            correctCount: g.correctCount,
+            wrongCount: g.wrongCount,
+            essayCorrect: g.essayCorrect,
+            essayWrong: g.essayWrong,
+            essayDone: g.essayDone,
+            fallCount: g.fallCount,
+            answers: g.answers,
+            essayAnswers: g.essayAnswers,
+            pose: {
+              x: Number(g.pos.x.toFixed(2)),
+              y: Number(g.pos.y.toFixed(2)),
+              z: Number(g.pos.z.toFixed(2)),
+              yaw: Number(g.yaw.toFixed(2)),
+              cp: g.currentCP,
+              state: g.lastPoseState,
+            },
+          });
+          if (pendingProgressSyncRef.current) {
+            pendingProgressSyncRef.current = false;
+            cb.emitStudentProgress();
           }
         }
-      });
-    },
-    [
-      activateExpeditionOnStudent,
-      applyRoomSettings,
-      applySessionEnded,
-      cleanupChannel,
-      clearStudentSession,
-      emitStudentProgress,
-      handleTeacherEvent,
-      removeRemotePlayer,
-      scheduleTeacherRoomPersist,
-      showWarning,
-      triggerLightningFlash,
-      upsertRemotePlayer,
-    ],
-  );
+      } else if (status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT') {
+        isChannelSubscribedRef.current = false;
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          cb.showWarning('Koneksi Supabase Realtime terganggu sementara, memulihkan...', 2.5);
+        }
+        const g = gameRef.current;
+        if (!intentionalDisconnectRef.current && g.inGame && !g.sessionEnded && g.roomCode) {
+          if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = window.setTimeout(() => {
+            reconnectTimerRef.current = null;
+            const latest = gameRef.current;
+            if (!intentionalDisconnectRef.current && latest.inGame && !latest.sessionEnded && latest.roomCode) {
+              subscribeRoomChannel(latest.roomCode);
+            }
+          }, 2000);
+        }
+      }
+    });
+  }, [cleanupChannel]);
 
-  // Throttled 250ms (max 4x/sec) Position Sync — only sends when player actually moved or changed state
+  // 4-second Lightweight Heartbeat + visibilitychange State Recovery (without page refresh)
+  useEffect(() => {
+    if (!inGame || sessionEnded || isStandaloneMode || !roomCode) return;
+
+    const pullLatestRoomState = async () => {
+      const g = gameRef.current;
+      if (!g.inGame || g.sessionEnded || !g.roomCode) return;
+      try {
+        const rec = await fetchSupabaseRoomRecord(g.roomCode);
+        const cfg = rec.config;
+        const cb = channelCallbacksRef.current;
+        if (rec.activeEvent) {
+          cb.handleIncomingRoomCommand(rec.activeEvent, true);
+        }
+        if (g.role === 'student') {
+          if (cfg.settings) {
+            cb.applyRoomSettings(cfg.settings);
+          }
+          if (cfg.status === 'started' && g.roomStatus === 'waiting') {
+            cb.activateExpeditionOnStudent(cfg.remainingSec, cfg.sessionEndsAt, cfg.settings);
+          }
+          if (typeof cfg.paused === 'boolean' && cfg.paused !== g.paused) {
+            g.paused = cfg.paused;
+            setPaused(cfg.paused);
+          }
+          if (cfg.sessionEnded && !g.sessionEnded) {
+            cb.applySessionEnded(cfg.endReason ?? 'teacher');
+          }
+        }
+      } catch {
+        // ignore transient fetch errors
+      }
+    };
+
+    const runHeartbeat = () => {
+      const g = gameRef.current;
+      if (!g.inGame || g.sessionEnded || intentionalDisconnectRef.current) return;
+      const ch = channelRef.current;
+      if (!ch || !isChannelSubscribedRef.current || ch.state !== 'joined') {
+        if (!reconnectTimerRef.current && g.roomCode) {
+          subscribeRoomChannel(g.roomCode);
+        }
+        return;
+      }
+      void ch
+        .track({
+          id: g.clientId,
+          playerId: g.clientId,
+          role: g.role,
+          name: g.name,
+          avatar: g.avatar,
+          joinedAt: joinedAtRef.current,
+          cp: g.currentCP,
+          pgCorrect: g.correctCount,
+          isianCorrect: g.essayCorrect,
+          score: g.score,
+          falls: g.fallCount,
+          isianDone: g.essayDone,
+        } satisfies RoomPresencePayload)
+        .catch(() => {});
+
+      if (g.role === 'student') {
+        void pullLatestRoomState();
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const g = gameRef.current;
+      if (!g.inGame || g.sessionEnded || !g.roomCode) return;
+      const ch = channelRef.current;
+      if (!ch || !isChannelSubscribedRef.current || ch.state !== 'joined') {
+        subscribeRoomChannel(g.roomCode);
+      } else if (g.role === 'student') {
+        channelCallbacksRef.current.emitStudentProgress();
+      }
+      void pullLatestRoomState();
+    };
+
+    if (heartbeatTimerRef.current) {
+      window.clearInterval(heartbeatTimerRef.current);
+    }
+    heartbeatTimerRef.current = window.setInterval(runHeartbeat, 4000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      if (heartbeatTimerRef.current) {
+        window.clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [inGame, isStandaloneMode, roomCode, sessionEnded, subscribeRoomChannel]);
+
+  // Throttled 650ms Position Sync — only sends when player actually moved or changed state (safe for 40+ students)
   useEffect(() => {
     if (!inGame || sessionEnded || isStandaloneMode) return;
 
     const broadcastId = window.setInterval(() => {
-      if (!channelRef.current) return;
+      if (!channelRef.current || !isChannelSubscribedRef.current) return;
       const g = gameRef.current;
       const px = Number(g.pos.x.toFixed(2));
       const py = Number(g.pos.y.toFixed(2));
@@ -2031,7 +2341,7 @@ export function App() {
           pose: posePayload,
         },
       });
-    }, 250);
+    }, 650);
 
     return () => window.clearInterval(broadcastId);
   }, [inGame, isStandaloneMode, sessionEnded]);
@@ -2383,17 +2693,33 @@ export function App() {
             } else {
               g.locomotionMode = 'walk';
               const chillMult = g.role === 'student' && g.chillSlowTimer > 0 ? 0.55 : 1.0;
-              const speed = (g.role === 'teacher' ? 68.0 : 26.5) * chillMult;
+              const maxWalkSpeed = (g.role === 'teacher' ? 48.0 : 19.0) * chillMult;
               const sinY = Math.sin(g.camYaw);
               const cosY = Math.cos(g.camYaw);
               const dirX = -sinY * moveForward + cosY * moveRight;
               const dirZ = -cosY * moveForward - sinY * moveRight;
 
+              const targetVx = isMoving ? dirX * maxWalkSpeed : 0;
+              const targetVz = isMoving ? dirZ * maxWalkSpeed : 0;
+              const accelRate = g.onGround ? (isMoving ? 15.5 : 19.5) : isMoving ? 7.5 : 3.5;
+              const velAlpha = 1 - Math.exp(-accelRate * dt);
+              g.vel.x += (targetVx - g.vel.x) * velAlpha;
+              g.vel.z += (targetVz - g.vel.z) * velAlpha;
+              if (!isMoving && Math.hypot(g.vel.x, g.vel.z) < 0.08) {
+                g.vel.x = 0;
+                g.vel.z = 0;
+              }
+
+              const horizSpeed = Math.hypot(g.vel.x, g.vel.z);
               if (isMoving) {
                 const targetYaw = Math.atan2(dirX, dirZ);
                 const diffYaw = ((targetYaw - g.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-                g.yaw += diffYaw * (1 - Math.exp(-16 * dt));
-                g.walkAnimTime += dt * 11.2;
+                g.yaw += diffYaw * (1 - Math.exp(-11.5 * dt));
+              }
+              if (horizSpeed > 0.45) {
+                const strideRate =
+                  g.role === 'teacher' ? Math.min(11.5, horizSpeed * 0.28) : horizSpeed * 0.44;
+                g.walkAnimTime += dt * strideRate;
                 const beat = Math.floor(g.walkAnimTime / Math.PI);
                 if (g.onGround && beat !== g.lastStepBeat) {
                   g.lastStepBeat = beat;
@@ -2410,8 +2736,8 @@ export function App() {
                 const prevX = g.pos.x;
                 const prevZ = g.pos.z;
 
-                g.pos.x = Math.max(-1420, Math.min(1420, g.pos.x + dirX * speed * subDt));
-                g.pos.z = Math.max(-1420, Math.min(1420, g.pos.z + dirZ * speed * subDt));
+                g.pos.x = Math.max(-1420, Math.min(1420, g.pos.x + g.vel.x * subDt));
+                g.pos.z = Math.max(-1420, Math.min(1420, g.pos.z + g.vel.z * subDt));
 
                 if (g.role === 'student') {
                   world.applyWindPush(g.pos, subDt, g.paused);
@@ -2468,7 +2794,7 @@ export function App() {
 
                 const wasOnGroundSub = g.onGround;
                 const prevVy = g.vel.y;
-                g.vel.y -= 26 * subDt;
+                g.vel.y -= 28.5 * subDt;
                 g.pos.y += g.vel.y * subDt;
                 const groundY = world.getGroundHeight(g.pos.x, g.pos.z, g.pos.y);
                 if (g.pos.y <= groundY) {
@@ -2654,7 +2980,7 @@ export function App() {
         }
 
         // Smoothly Interpolate Remote Players & Emotes
-        const remoteAlpha = 1 - Math.exp(-12 * dt);
+        const remoteAlpha = 1 - Math.exp(-8.5 * dt);
         for (const rp of world.remotePlayers.values()) {
           const prevDist = rp.mesh.position.distanceTo(rp.targetPos);
           rp.mesh.position.lerp(rp.targetPos, remoteAlpha);
@@ -2662,7 +2988,7 @@ export function App() {
           rp.mesh.rotation.y += diffYaw * remoteAlpha;
           world.updateAvatarBlobShadow(rp.mesh, rp.mesh.position);
           const movingRemote = prevDist > 0.04;
-          if (movingRemote) rp.walkPhase += dt * 11.2;
+          if (movingRemote) rp.walkPhase += dt * 8.4;
           if (rp.emoteTimer > 0) {
             rp.emoteTimer -= dt;
             if (rp.emoteTimer <= 0) {
@@ -2965,11 +3291,11 @@ export function App() {
     }
 
     const cleanName = sanitizeName(teacherName) || 'Guru Pemantau';
-    const dur = Math.min(45, Math.max(15, Number(initQuizDuration) || 30));
+    const dur = Math.min(60, Math.max(5, Number(initQuizDuration) || 30));
     const durSession = [10, 15, 20, 25, 30].includes(Number(initSessionDuration))
       ? Number(initSessionDuration)
       : Math.min(30, Math.max(10, Number(initSessionDuration) || 20));
-    const durExplain = Math.min(60, Math.max(40, Number(initExplanationDuration) || 45));
+    const durExplain = Math.min(60, Math.max(5, Number(initExplanationDuration) || 45));
 
     const generatedCode = generateRoomCode();
     const teacherId = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -3308,6 +3634,17 @@ export function App() {
       room.sessionEndsAt = endsAt;
       const snap = getHostParticipantsSnapshot(room.students);
 
+      const cmd: RoomCommandPayload = {
+        type: 'start_expedition',
+        eventId: createEventId(),
+        triggeredAt: Date.now(),
+        duration: 5000,
+        remainingSec: rem,
+        sessionEndsAt: endsAt,
+        settings: room.settings,
+        participants: snap,
+      };
+      sendRoomCommandBroadcast(channelRef.current, cmd);
       sendRoomBroadcast(channelRef.current, {
         type: 'game_start',
         remainingSec: rem,
@@ -3323,12 +3660,14 @@ export function App() {
         status: 'started',
       });
 
-      void upsertSupabaseRoom(room.code, buildSupabaseRoomConfig(room)).catch((err) => {
-        showWarning(
-          `Gagal memperbarui status ruangan di Supabase: ${err instanceof Error ? err.message : String(err)}`,
-          3.5,
-        );
-      });
+      void publishRoomCommandToSupabase(room.code, cmd, buildSupabaseRoomConfig(room)).catch(
+        (err) => {
+          showWarning(
+            `Gagal memperbarui status ruangan di Supabase: ${err instanceof Error ? err.message : String(err)}`,
+            3.5,
+          );
+        },
+      );
     }
 
     soundRef.current?.playCheckpoint();
@@ -3494,20 +3833,31 @@ export function App() {
       eventType === 'wildfire';
     const count = isGhost ? 3 : isStormParticle ? 50 : undefined;
     const offsets = isGhost ? [9, 15, 21] : undefined;
-    const payload: TriggerDisasterPayload = {
+    const nowMs = Date.now();
+    const cmd: RoomCommandPayload = {
       type: eventType,
+      eventId: createEventId(),
+      triggeredAt: nowMs,
       duration: 5000,
-      timestamp: Date.now(),
       count,
       offsets,
     };
-    handleTeacherEvent(payload.type, {
-      durationMs: payload.duration,
-      timestamp: payload.timestamp,
-      count: payload.count,
-      offsets: payload.offsets,
+
+    handleTeacherEvent(eventType, {
+      durationMs: 5000,
+      timestamp: nowMs,
+      count,
+      offsets,
     });
-    sendTriggerDisasterBroadcast(channelRef.current, payload);
+
+    sendRoomCommandBroadcast(channelRef.current, cmd);
+    if (hostRoomRef.current) {
+      void publishRoomCommandToSupabase(
+        hostRoomRef.current.code,
+        cmd,
+        buildSupabaseRoomConfig(hostRoomRef.current),
+      ).catch(() => {});
+    }
   };
 
   const handleTogglePause = () => {
@@ -3521,6 +3871,17 @@ export function App() {
       hostRoomRef.current.paused = nextPaused;
       hostRoomRef.current.remainingSec = rem;
       hostRoomRef.current.sessionEndsAt = nextPaused ? null : Date.now() + rem * 1000;
+      const cmd: RoomCommandPayload = {
+        type: 'pause_class',
+        eventId: createEventId(),
+        triggeredAt: Date.now(),
+        duration: 5000,
+        paused: nextPaused,
+        remainingSec: rem,
+        sessionEndsAt: hostRoomRef.current.sessionEndsAt,
+        settings: hostRoomRef.current.settings,
+      };
+      sendRoomCommandBroadcast(channelRef.current, cmd);
       sendRoomBroadcast(channelRef.current, {
         type: 'pause_updated',
         paused: nextPaused,
@@ -3532,8 +3893,9 @@ export function App() {
         sessionDurationMinutes: settings.sessionDurationMinutes,
         paused: nextPaused,
       });
-      void upsertSupabaseRoom(
+      void publishRoomCommandToSupabase(
         hostRoomRef.current.code,
+        cmd,
         buildSupabaseRoomConfig(hostRoomRef.current),
       ).catch(() => {});
     }
@@ -3572,13 +3934,27 @@ export function App() {
       room.remainingSec = 0;
       room.sessionEndsAt = null;
       room.endReason = 'teacher';
+      const cmd: RoomCommandPayload = {
+        type: 'end_session',
+        eventId: createEventId(),
+        triggeredAt: Date.now(),
+        duration: 5000,
+        reason: 'teacher',
+        leaderboard: leaderboardSnap,
+        exportRows: exportSnap,
+      };
+      sendRoomCommandBroadcast(channelRef.current, cmd);
       sendRoomBroadcast(channelRef.current, {
         type: 'session_ended',
         reason: 'teacher',
         leaderboard: leaderboardSnap,
         exportRows: exportSnap,
       });
-      void upsertSupabaseRoom(room.code, buildSupabaseRoomConfig(room)).catch(() => {});
+      void publishRoomCommandToSupabase(
+        room.code,
+        cmd,
+        buildSupabaseRoomConfig(room),
+      ).catch(() => {});
     }
 
     applySessionEnded('teacher', leaderboardSnap, exportSnap);

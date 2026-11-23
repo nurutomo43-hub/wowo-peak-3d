@@ -44,7 +44,7 @@ const MiniAvatarPortrait: React.FC<{ avatar: AvatarConfig; name: string }> = ({
   const hair = avatar.hairColor || '#1c1917';
   const jacket = avatar.jacket || '#ef4444';
   const hat = avatar.headAccessory || 'none';
-  const isHijab = avatar.hairStyle === 'hijab';
+  const isHijab = avatar.hairStyle === 'hijab' || avatar.hairStyle === 'hijab_sport';
   const hasSuit = avatar.superheroSuit && avatar.superheroSuit !== 'none';
 
   return (

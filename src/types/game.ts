@@ -7,6 +7,9 @@ export type OutfitType =
   | 'windbreaker'
   | 'casual'
   | 'flannel'
+  | 'tactical_vest'
+  | 'tunic'
+  | 'outdoor_vest'
   | 'formal'
   | 'poncho'
   | 'koko'
@@ -23,24 +26,257 @@ export type HeadAccessoryType =
   | 'towel_headband'
   | 'headlamp'
   | 'bando'
+  | 'hairpin'
   | 'peci'
   | 'blangkon';
 
-export type BackGearType = 'none' | 'carrier' | 'cape' | 'wings' | 'jetpack';
+export type BackGearType = 'none' | 'carrier' | 'sling' | 'cape' | 'wings' | 'jetpack';
+
+export type FaceExpressionType =
+  | 'auto'
+  | 'smile'
+  | 'laugh'
+  | 'angry'
+  | 'annoyed'
+  | 'sad'
+  | 'shocked'
+  | 'cool'
+  | 'sleepy'
+  | 'shy'
+  | 'ninja_mask'
+  | 'elder_wise'
+  | 'otaku_glasses'
+  | 'chibi';
+
+export type FaceAgeType = 'young' | 'elder';
+
+export type EyeStyleType =
+  | 'auto'
+  | 'normal'
+  | 'sharingan'
+  | 'mangekyou'
+  | 'rinnegan'
+  | 'byakugan'
+  | 'sage'
+  | 'kyuubi'
+  | 'imu'
+  | 'nika'
+  | 'mihawk'
+  | 'six_eyes'
+  | 'sukuna'
+  | 'ssj'
+  | 'ui'
+  | 'upper_moon'
+  | 'geass';
+
+export type NeckAccessoryType = 'none' | 'scarf' | 'knit_scarf';
+export type WristAccessoryType = 'none' | 'watch';
 
 export type CharacterCostumeId =
   | 'none'
-  // Universal Superhero (Marvel & DC)
+  // Hero (20)
+  | 'doctor_doom'
+  | 'scarlet_witch'
+  | 'doctor_strange'
   | 'ironman'
   | 'spiderman'
   | 'captain_america'
   | 'thor'
   | 'hulk'
-  | 'superman'
+  | 'black_panther'
+  | 'wolverine'
+  | 'deadpool'
   | 'batman'
+  | 'superman'
   | 'wonder_woman'
   | 'flash'
-  // Asian & Indonesian Superhero
+  | 'aquaman'
+  | 'green_lantern'
+  | 'moon_knight'
+  | 'ghost_rider'
+  | 'venom'
+  // Dewa Mitologi Dunia (20)
+  | 'buddha'
+  | 'odin'
+  | 'zeus'
+  | 'poseidon'
+  | 'hades'
+  | 'athena'
+  | 'anubis'
+  | 'ra'
+  | 'horus'
+  | 'osiris'
+  | 'amaterasu'
+  | 'susanoo'
+  | 'tsukuyomi'
+  | 'sun_wukong'
+  | 'nezha'
+  | 'erlang_shen'
+  | 'siwa'
+  | 'wisnu'
+  | 'ganesha'
+  | 'quetzalcoatl'
+  // One Piece (25)
+  | 'luffy'
+  | 'loki'
+  | 'imu'
+  | 'kaido'
+  | 'garp'
+  | 'sengoku'
+  | 'shirohige'
+  | 'roger'
+  | 'shiki'
+  | 'zoro'
+  | 'sanji'
+  | 'nami'
+  | 'usopp'
+  | 'chopper'
+  | 'nico_robin'
+  | 'franky'
+  | 'brook'
+  | 'jinbe'
+  | 'ace'
+  | 'sabo'
+  | 'law'
+  | 'kid'
+  | 'shanks'
+  | 'mihawk'
+  | 'boa_hancock'
+  // Jujutsu Kaisen (20)
+  | 'gojo'
+  | 'sukuna'
+  | 'yuji'
+  | 'megumi'
+  | 'nobara'
+  | 'yuta'
+  | 'maki'
+  | 'toji'
+  | 'nanami'
+  | 'hakari'
+  | 'kashimo'
+  | 'higuruma'
+  | 'choso'
+  | 'geto'
+  | 'kenjaku'
+  | 'mahito'
+  | 'jogo'
+  | 'hanami'
+  | 'inumaki'
+  | 'todo'
+  // Attack on Titan (20)
+  | 'eren'
+  | 'mikasa'
+  | 'armin'
+  | 'levi'
+  | 'erwin'
+  | 'hange'
+  | 'reiner'
+  | 'bertholdt'
+  | 'annie'
+  | 'zeke'
+  | 'pieck'
+  | 'porco'
+  | 'lara_tybur'
+  | 'jean'
+  | 'connie'
+  | 'sasha'
+  | 'historia'
+  | 'ymir_aot'
+  | 'kenny'
+  | 'falco'
+  // Naruto & Boruto (20)
+  | 'naruto'
+  | 'sasuke'
+  | 'boruto'
+  | 'kakashi'
+  | 'itachi'
+  | 'madara'
+  | 'obito'
+  | 'minato'
+  | 'sakura'
+  | 'hinata'
+  | 'shikamaru'
+  | 'rock_lee'
+  | 'gaara'
+  | 'jiraiya'
+  | 'tsunade'
+  | 'orochimaru'
+  | 'pain'
+  | 'killer_bee'
+  | 'kawaki'
+  | 'mitsuki'
+  // Bleach TYBW (20)
+  | 'ichigo'
+  | 'rukia'
+  | 'renji'
+  | 'uryu'
+  | 'orihime'
+  | 'chad'
+  | 'byakuya'
+  | 'toshiro'
+  | 'kenpachi'
+  | 'shunsui'
+  | 'urahara'
+  | 'yoruichi'
+  | 'aizen'
+  | 'ulquiorra'
+  | 'grimmjow'
+  | 'yhwach'
+  | 'jugram'
+  | 'bambietta'
+  | 'yamamoto'
+  | 'unohana'
+  // Dragon Ball (20)
+  | 'goku'
+  | 'vegeta'
+  | 'gohan'
+  | 'piccolo'
+  | 'trunks'
+  | 'frieza'
+  | 'cell'
+  | 'majin_buu'
+  | 'broly'
+  | 'gogeta'
+  | 'vegito'
+  | 'beerus'
+  | 'whis'
+  | 'zeno'
+  | 'krillin'
+  | 'android_17'
+  | 'android_18'
+  | 'tien'
+  | 'bardock'
+  | 'jiren'
+  // Hunter x Hunter (20)
+  | 'gon'
+  | 'killua'
+  | 'kurapika'
+  | 'leorio'
+  | 'hisoka'
+  | 'chrollo'
+  | 'meruem'
+  | 'neferpitou'
+  | 'netero'
+  | 'ging'
+  | 'illumi'
+  | 'feitan'
+  | 'shalnark'
+  | 'machi'
+  | 'nobunaga'
+  | 'uvogin'
+  | 'kite'
+  | 'biscuit'
+  | 'morel'
+  | 'zeno_zoldyck'
+  // Legacy Aliases (auto-normalized)
+  | 'luffy_gear5'
+  | 'goku_ssj'
+  | 'aokiji'
+  | 'hashirama'
+  | 'tobirama'
+  | 'hiruzen'
+  | 'gin'
+  | 'ichibe'
   | 'k_cyber'
   | 'taekwondo_hero'
   | 'ultraman'
@@ -49,79 +285,16 @@ export type CharacterCostumeId =
   | 'gatotkaca'
   | 'gundala'
   | 'sri_asih'
-  // Mythology Gods (Greek, Hindu, Nusantara)
-  | 'zeus'
   | 'prometheus'
-  | 'poseidon'
-  | 'athena'
   | 'krishna'
-  | 'siwa'
-  | 'wisnu'
-  | 'hanoman'
-  // Anime: One Piece (13)
-  | 'luffy'
-  | 'luffy_gear5'
-  | 'boa_hancock'
-  | 'zoro'
-  | 'kaido'
-  | 'aokiji'
-  | 'shanks'
-  | 'mihawk'
-  | 'sanji'
-  | 'ace'
-  | 'law'
-  | 'nami'
-  | 'nico_robin'
-  // Anime: Naruto & Boruto (14)
-  | 'naruto'
-  | 'sasuke'
-  | 'kakashi'
-  | 'sakura'
-  | 'hashirama'
-  | 'tobirama'
-  | 'hiruzen'
-  | 'minato'
-  | 'tsunade'
-  | 'jiraiya'
-  | 'boruto'
-  | 'itachi'
-  | 'obito'
-  | 'madara'
-  // Anime: Bleach TYBW (12)
-  | 'ichigo'
-  | 'gin'
-  | 'aizen'
-  | 'ichibe'
-  | 'yhwach'
-  | 'ulquiorra'
-  | 'grimmjow'
-  | 'kenpachi'
-  | 'toshiro'
-  | 'byakuya'
-  | 'rukia'
-  | 'yamamoto'
-  // Anime: Dragon Ball (9)
-  | 'goku'
-  | 'goku_ssj'
-  | 'vegeta'
-  | 'gohan'
-  | 'piccolo'
-  | 'trunks'
-  | 'beerus'
-  | 'whis'
-  | 'zeno'
-  // Anime: Hunter x Hunter (5)
-  | 'gon'
-  | 'killua'
-  | 'kurapika'
-  | 'leorio'
-  | 'hisoka';
+  | 'hanoman';
 
 export type SuperheroSuitType = CharacterCostumeId;
 export type HatType = HeadAccessoryType | 'headband' | 'helmet' | 'crown';
 
 export type HairStyle =
   | 'short'
+  | 'mohawk'
   | 'side_part'
   | 'spiky'
   | 'undercut'
@@ -129,7 +302,10 @@ export type HairStyle =
   | 'long_loose'
   | 'ponytail'
   | 'twin_braids'
+  | 'single_braid'
+  | 'twintails'
   | 'hijab'
+  | 'hijab_sport'
   | 'parted'
   | 'long_tie'
   | 'bob'
@@ -161,6 +337,29 @@ export interface TriggerDisasterPayload {
   offsets?: number[];
 }
 
+export type RoomCommandType =
+  | DisasterEventType
+  | 'pause_class'
+  | 'start_expedition'
+  | 'end_session';
+
+export interface RoomCommandPayload {
+  type: RoomCommandType;
+  eventId: string;
+  triggeredAt: number;
+  duration: number;
+  count?: number;
+  offsets?: number[];
+  paused?: boolean;
+  remainingSec?: number;
+  sessionEndsAt?: number | null;
+  settings?: RoomSettings;
+  participants?: ParticipantSummary[];
+  reason?: 'teacher' | 'timeout';
+  leaderboard?: ParticipantSummary[];
+  exportRows?: ExportStudentRow[];
+}
+
 export interface AvatarConfig {
   gender: GenderType;
   outfit: OutfitType;
@@ -176,6 +375,12 @@ export interface AvatarConfig {
   backGear: BackGearType;
   pack: string;
   superheroSuit: CharacterCostumeId;
+  characterForm?: string;
+  faceExpression?: FaceExpressionType;
+  faceAge?: FaceAgeType;
+  eyeStyle?: EyeStyleType;
+  neckAccessory?: NeckAccessoryType;
+  wristAccessory?: WristAccessoryType;
 }
 
 export const DEFAULT_STUDENT_AVATAR: AvatarConfig = {
@@ -193,6 +398,12 @@ export const DEFAULT_STUDENT_AVATAR: AvatarConfig = {
   backGear: 'carrier',
   pack: '#78350f',
   superheroSuit: 'none',
+  characterForm: 'base',
+  faceExpression: 'auto',
+  faceAge: 'young',
+  eyeStyle: 'auto',
+  neckAccessory: 'none',
+  wristAccessory: 'none',
 };
 
 export const DEFAULT_TEACHER_AVATAR: AvatarConfig = {
@@ -210,6 +421,12 @@ export const DEFAULT_TEACHER_AVATAR: AvatarConfig = {
   backGear: 'carrier',
   pack: '#1f2937',
   superheroSuit: 'none',
+  characterForm: 'base',
+  faceExpression: 'auto',
+  faceAge: 'young',
+  eyeStyle: 'auto',
+  neckAccessory: 'none',
+  wristAccessory: 'none',
 };
 
 export interface QuizQuestion {

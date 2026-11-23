@@ -4,15 +4,26 @@ import {
   DEFAULT_STUDENT_AVATAR,
   DEFAULT_TEACHER_AVATAR,
   type AvatarConfig,
+  type BackGearType,
   type CharacterCostumeId,
   type EmoteType,
+  type EyeStyleType,
+  type FaceAgeType,
+  type FaceExpressionType,
   type GenderType,
   type HairStyle,
   type HeadAccessoryType,
+  type NeckAccessoryType,
   type OutfitType,
   type PantsStyleType,
   type Role,
+  type WristAccessoryType,
 } from '../types/game';
+import {
+  canonicalizeCharacterAndForm,
+  resolveCharacterSpec,
+  type CostumeStyleSpec,
+} from './CharacterCatalog';
 
 export type AvatarPoseState = 'idle' | 'walk' | 'jump' | 'climb' | 'slide' | 'hurt';
 
@@ -47,6 +58,86 @@ export interface R15JointRig {
 
 const textureCache = new Map<string, THREE.CanvasTexture>();
 
+interface CachedFaceEntry {
+  texture: THREE.CanvasTexture;
+  refs: number;
+}
+const faceTextureCache = new Map<string, CachedFaceEntry>();
+const MAX_FACE_CACHE = 72;
+
+function markShared<T extends THREE.BufferGeometry>(geo: T): T {
+  geo.userData.shared = true;
+  return geo;
+}
+
+const SHARED_GEO = {
+  facePlane: markShared(new THREE.PlaneGeometry(0.45, 0.45)),
+  headBox: markShared(new RoundedBoxGeometry(0.52, 0.52, 0.5, 3, 0.18)),
+  torsoFrontMale: markShared(new THREE.PlaneGeometry(0.67, 0.54)),
+  torsoFrontFemale: markShared(new THREE.PlaneGeometry(0.5, 0.54)),
+  hairRearShell: markShared(new RoundedBoxGeometry(0.55, 0.48, 0.17, 2, 0.08)),
+  hairCrown: markShared(new RoundedBoxGeometry(0.56, 0.23, 0.55, 2, 0.1)),
+  hairCapShort: markShared(new RoundedBoxGeometry(0.55, 0.22, 0.54, 2, 0.1)),
+  hairSideShort: markShared(new RoundedBoxGeometry(0.08, 0.2, 0.28, 1, 0.03)),
+  hairBangCone: markShared(new THREE.ConeGeometry(0.072, 0.15, 5)),
+  hairSpikeCone: markShared(new THREE.ConeGeometry(0.078, 0.24, 6)),
+  hairGonSpikeCone: markShared(new THREE.ConeGeometry(0.095, 0.4, 6)),
+  hairBangSide: markShared(new RoundedBoxGeometry(0.24, 0.13, 0.1, 2, 0.04)),
+  hairCurlSphere: markShared(new THREE.SphereGeometry(0.11, 8, 6)),
+  mohawkFin: markShared(new THREE.BoxGeometry(0.085, 0.2, 0.48)),
+  mohawkSpike: markShared(new THREE.ConeGeometry(0.055, 0.16, 4)),
+  braidSeg: markShared(new THREE.SphereGeometry(0.07, 8, 6)),
+  braidTip: markShared(new THREE.ConeGeometry(0.052, 0.12, 6)),
+  ponytailTail: markShared(new THREE.CylinderGeometry(0.075, 0.048, 0.42, 8)),
+  hijabWrap: markShared(new RoundedBoxGeometry(0.58, 0.58, 0.56, 3, 0.18)),
+  hijabDrape: markShared(new THREE.CylinderGeometry(0.24, 0.37, 0.32, 12)),
+  hijabFold: markShared(new THREE.TorusGeometry(0.265, 0.038, 6, 14, Math.PI * 1.15)),
+  hijabSportCap: markShared(new RoundedBoxGeometry(0.56, 0.54, 0.54, 3, 0.17)),
+  hijabSportNeck: markShared(new THREE.CylinderGeometry(0.2, 0.26, 0.22, 10)),
+  hijabPin: markShared(new THREE.SphereGeometry(0.026, 8, 6)),
+  elderBeard: markShared(new THREE.ConeGeometry(0.14, 0.22, 7)),
+  watchBand: markShared(new THREE.CylinderGeometry(0.112, 0.112, 0.055, 10)),
+  watchDial: markShared(new THREE.BoxGeometry(0.06, 0.045, 0.03)),
+  scarfRing: markShared(new THREE.TorusGeometry(0.23, 0.058, 6, 14)),
+  scarfTail: markShared(new THREE.BoxGeometry(0.14, 0.36, 0.045)),
+  slingStrap: markShared(new THREE.BoxGeometry(0.065, 0.78, 0.38)),
+  slingBag: markShared(new RoundedBoxGeometry(0.24, 0.28, 0.16, 2, 0.04)),
+  hairpinBar: markShared(new THREE.BoxGeometry(0.09, 0.032, 0.03)),
+  hairpinBow: markShared(new THREE.SphereGeometry(0.038, 8, 6)),
+};
+
+export function disposeAvatarGroup(root: THREE.Object3D | null | undefined) {
+  if (!root) return;
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (mesh.geometry && !mesh.geometry.userData?.shared) {
+      mesh.geometry.dispose();
+    }
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      const std = mat as THREE.MeshStandardMaterial;
+      if (std.map) {
+        const refKey = std.map.userData?.faceCacheKey as string | undefined;
+        if (refKey) {
+          const entry = faceTextureCache.get(refKey);
+          if (entry) {
+            entry.refs -= 1;
+            if (entry.refs <= 0) {
+              entry.texture.dispose();
+              faceTextureCache.delete(refKey);
+            }
+          }
+        } else if (!std.map.userData?.sharedTexture) {
+          std.map.dispose();
+        }
+      }
+      mat.dispose();
+    }
+  });
+}
+
 function getProceduralTexture(
   key: string,
   draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
@@ -63,7 +154,1140 @@ function getProceduralTexture(
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
+  tex.userData.sharedTexture = true;
   textureCache.set(key, tex);
+  return tex;
+}
+
+export interface AnimeFaceOptions {
+  characterId: CharacterCostumeId;
+  expression?: FaceExpressionType;
+  age?: FaceAgeType;
+  eyeStyle?: EyeStyleType;
+  isFemale?: boolean;
+  hairColor?: string;
+  spec?: CostumeStyleSpec;
+}
+
+function drawSharinganIris(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+  ctx.fillStyle = '#dc2626';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#09090b';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(9,9,11,0.55)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.58, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = '#09090b';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.25, 0, Math.PI * 2);
+  ctx.fill();
+
+  for (let i = 0; i < 3; i++) {
+    const a = (i * Math.PI * 2) / 3 - Math.PI / 2;
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(a) * r * 0.58, cy + Math.sin(a) * r * 0.58, r * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawMangekyouIris(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+  ctx.fillStyle = '#dc2626';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#09090b';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  ctx.fillStyle = '#09090b';
+  for (let i = 0; i < 3; i++) {
+    const a = (i * Math.PI * 2) / 3 - Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.quadraticCurveTo(
+      cx + Math.cos(a + 0.55) * r * 0.85,
+      cy + Math.sin(a + 0.55) * r * 0.85,
+      cx + Math.cos(a) * r * 0.88,
+      cy + Math.sin(a) * r * 0.88,
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = '#dc2626';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRinneganIris(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number) {
+  ctx.fillStyle = '#d8b4fe';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#1e1b4b';
+  ctx.lineWidth = 1.2;
+  [1, 0.72, 0.44].forEach((scale) => {
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx * scale, ry * scale, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.fillStyle = '#09090b';
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.min(rx, ry) * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawImuIris(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+  ctx.fillStyle = '#dc2626';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#facc15';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.76, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#09090b';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.76, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.46, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#09090b';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSageIris(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+  ctx.fillStyle = '#facc15';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#78350f';
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.fillStyle = '#09090b';
+  ctx.fillRect(cx - r * 0.78, cy - 2.4, r * 1.56, 4.8);
+}
+
+function drawAnimeFaceCanvas(ctx: CanvasRenderingContext2D, opts: AnimeFaceOptions) {
+  const W = 128;
+  const H = 128;
+  ctx.clearRect(0, 0, W, H);
+
+  const id = opts.characterId;
+  const spec = opts.spec;
+  const exp: FaceExpressionType =
+    opts.expression && opts.expression !== 'auto'
+      ? opts.expression
+      : spec?.defaultExpression || 'auto';
+  const age = opts.age || 'young';
+  const eyeStyle: EyeStyleType =
+    opts.eyeStyle && opts.eyeStyle !== 'auto'
+      ? opts.eyeStyle
+      : spec?.defaultEye || 'auto';
+  const isElder = age === 'elder' || exp === 'elder_wise';
+  const isFemale = Boolean(opts.isFemale) || Boolean(spec?.isFemale);
+  const faceMark = spec?.faceMark || 'none';
+
+  // Imu-sama Abyssal Silhouette: pitch black face with glowing concentric Imu eyes
+  if (spec?.imuSilhouette) {
+    ctx.fillStyle = '#050507';
+    ctx.fillRect(0, 0, W, H);
+    const ilx = 40;
+    const irx = 88;
+    const iey = 54;
+    [ilx, irx].forEach((cx) => {
+      drawImuIris(ctx, cx, iey, 12);
+    });
+    return;
+  }
+
+  const lx = 40; // Viewer's left = Character's Right (+-side)
+  const rx = 88; // Viewer's right = Character's Left (+X)
+  const ey = 54;
+
+  // 1. Optional Sage Mode orange eyelid pigmentation
+  if (eyeStyle === 'sage') {
+    ctx.fillStyle = 'rgba(234, 88, 12, 0.72)';
+    [lx, rx].forEach((cx) => {
+      ctx.beginPath();
+      ctx.ellipse(cx, ey - 1, 18, 13, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // 2. Character-specific cheek / under-eye / forehead marks
+  if (id === 'naruto' || id === 'boruto' || faceMark === 'naruto_whiskers' || faceMark === 'boruto_whiskers') {
+    const lineCount = id === 'boruto' || faceMark === 'boruto_whiskers' ? 2 : 3;
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < lineCount; i++) {
+      const y = 69 + i * 6;
+      ctx.beginPath();
+      ctx.moveTo(14, y - 1);
+      ctx.lineTo(31, y + 1);
+      ctx.moveTo(114, y - 1);
+      ctx.lineTo(97, y + 1);
+      ctx.stroke();
+    }
+  } else if (id === 'ace' || faceMark === 'ace_freckles') {
+    ctx.fillStyle = '#78350f';
+    [
+      [25, 70], [31, 74], [27, 77], [35, 71],
+      [103, 70], [97, 74], [101, 77], [93, 71],
+    ].forEach(([fx, fy]) => {
+      ctx.beginPath();
+      ctx.arc(fx, fy, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  } else if (id === 'luffy' || faceMark === 'luffy_scar') {
+    ctx.strokeStyle = '#7f1d1d';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(81, 68);
+    ctx.quadraticCurveTo(90, 74, 100, 69);
+    ctx.stroke();
+    ctx.lineWidth = 1.5;
+    [85, 91, 96].forEach((sx) => {
+      ctx.beginPath();
+      ctx.moveTo(sx, 67);
+      ctx.lineTo(sx, 75);
+      ctx.stroke();
+    });
+  } else if (id === 'itachi' || faceMark === 'itachi_lines') {
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(41, 68);
+    ctx.quadraticCurveTo(36, 78, 30, 84);
+    ctx.moveTo(87, 68);
+    ctx.quadraticCurveTo(92, 78, 98, 84);
+    ctx.stroke();
+  } else if (id === 'law' || faceMark === 'law_dark_eyes') {
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.72)';
+    ctx.lineWidth = 3;
+    [lx, rx].forEach((cx) => {
+      ctx.beginPath();
+      ctx.arc(cx, ey + 3, 12, 0.15 * Math.PI, 0.85 * Math.PI);
+      ctx.stroke();
+    });
+  } else if (id === 'hisoka' || faceMark === 'hisoka_marks') {
+    ctx.fillStyle = '#e11d48';
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = (i * Math.PI) / 5 - Math.PI / 2;
+      const rad = i % 2 === 0 ? 7.5 : 3.4;
+      const px = 26 + Math.cos(a) * rad;
+      const py = 74 + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#06b6d4';
+    ctx.beginPath();
+    ctx.moveTo(102, 66);
+    ctx.quadraticCurveTo(109, 77, 102, 82);
+    ctx.quadraticCurveTo(95, 77, 102, 66);
+    ctx.fill();
+  } else if (id === 'zeno' || faceMark === 'zeno_stripes') {
+    ctx.fillStyle = '#3b82f6';
+    ctx.fillRect(14, 65, 9, 16);
+    ctx.fillRect(105, 65, 9, 16);
+  } else if (id === 'ulquiorra' || faceMark === 'ulquiorra_tears') {
+    ctx.fillStyle = '#10b981';
+    ctx.fillRect(lx - 3, 66, 6, 22);
+    ctx.fillRect(rx - 3, 66, 6, 22);
+  } else if (id === 'tsunade' || id === 'sakura' || faceMark === 'byakugou') {
+    ctx.fillStyle = '#6366f1';
+    ctx.beginPath();
+    ctx.moveTo(64, 18);
+    ctx.lineTo(70, 26);
+    ctx.lineTo(64, 34);
+    ctx.lineTo(58, 26);
+    ctx.closePath();
+    ctx.fill();
+  } else if (id === 'yamamoto' || faceMark === 'yamamoto_scar') {
+    ctx.strokeStyle = '#991b1b';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(72, 16);
+    ctx.lineTo(94, 34);
+    ctx.moveTo(92, 16);
+    ctx.lineTo(74, 34);
+    ctx.stroke();
+  } else if (id === 'krishna' || faceMark === 'krishna_tilak') {
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(58, 20);
+    ctx.quadraticCurveTo(64, 32, 70, 20);
+    ctx.stroke();
+  } else if (id === 'siwa' || faceMark === 'shiva_third_eye' || faceMark === 'third_eye') {
+    ctx.fillStyle = faceMark === 'shiva_third_eye' ? '#ef4444' : '#38bdf8';
+    ctx.beginPath();
+    ctx.ellipse(64, 24, 3.2, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  } else if (faceMark === 'sukuna_tattoos' || faceMark === 'sukuna_heian') {
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 2.8;
+    // Nose bridge bar & cheek stripes
+    ctx.fillStyle = '#09090b';
+    ctx.fillRect(54, 59, 20, 4);
+    ctx.beginPath();
+    ctx.moveTo(16, 68); ctx.lineTo(31, 66);
+    ctx.moveTo(16, 76); ctx.lineTo(31, 74);
+    ctx.moveTo(112, 68); ctx.lineTo(97, 66);
+    ctx.moveTo(112, 76); ctx.lineTo(97, 74);
+    ctx.stroke();
+    // Forehead double curved stripes
+    ctx.beginPath();
+    ctx.moveTo(46, 20); ctx.quadraticCurveTo(64, 27, 82, 20);
+    ctx.stroke();
+    // Extra lower pair of Sukuna eyes
+    [lx - 2, rx + 2].forEach((sx) => {
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.ellipse(sx, 71, 6.5, 3.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.arc(sx, 71, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  } else if (faceMark === 'karma_boruto' || faceMark === 'karma_kawaki') {
+    const kColor = faceMark === 'karma_kawaki' ? '#ef4444' : '#38bdf8';
+    ctx.strokeStyle = kColor;
+    ctx.fillStyle = kColor;
+    ctx.lineWidth = 2.6;
+    const kx = faceMark === 'karma_kawaki' ? 22 : 96;
+    ctx.beginPath();
+    ctx.moveTo(kx, 22);
+    ctx.lineTo(kx + 8, 30);
+    ctx.lineTo(kx, 38);
+    ctx.lineTo(kx - 8, 30);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(kx, 38);
+    ctx.lineTo(kx, 76);
+    ctx.stroke();
+  } else if (faceMark === 'titan_marks') {
+    ctx.strokeStyle = '#7f1d1d';
+    ctx.lineWidth = 2.2;
+    [lx, rx].forEach((cx) => {
+      ctx.beginPath();
+      ctx.moveTo(cx - 5, ey + 13);
+      ctx.lineTo(cx - 8, ey + 24);
+      ctx.moveTo(cx + 3, ey + 13);
+      ctx.lineTo(cx + 6, ey + 25);
+      ctx.stroke();
+    });
+  } else if (faceMark === 'majin_m') {
+    ctx.fillStyle = '#09090b';
+    ctx.font = '900 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('M', 64, 30);
+  } else if (faceMark === 'kaguya_byakugan') {
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.ellipse(64, 24, 5, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (faceMark === 'garp_scar') {
+    ctx.strokeStyle = '#7f1d1d';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(rx - 4, ey - 16);
+    ctx.lineTo(rx + 4, ey + 16);
+    ctx.stroke();
+  } else if ((isFemale && exp === 'auto') || exp === 'shy') {
+    ctx.fillStyle = exp === 'shy' ? 'rgba(244, 63, 94, 0.45)' : 'rgba(244, 114, 182, 0.28)';
+    ctx.beginPath();
+    ctx.ellipse(27, 69, 9, 5, 0, 0, Math.PI * 2);
+    ctx.ellipse(101, 69, 9, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (exp === 'shy') {
+      ctx.strokeStyle = '#e11d48';
+      ctx.lineWidth = 1.6;
+      [22, 27, 32, 96, 101, 106].forEach((bx) => {
+        ctx.beginPath();
+        ctx.moveTo(bx, 66);
+        ctx.lineTo(bx - 3, 73);
+        ctx.stroke();
+      });
+    }
+  }
+
+  // 3. Determine effective eye appearance & iris color
+  let effectiveEye: EyeStyleType = eyeStyle;
+  if (effectiveEye === 'auto') {
+    if (id === 'sasuke' || id === 'itachi' || id === 'madara' || id === 'kakashi' || id === 'obito') {
+      effectiveEye = 'sharingan';
+    } else if (id === 'goku_ssj') {
+      effectiveEye = 'ssj';
+    } else {
+      effectiveEye = 'normal';
+    }
+  }
+
+  let irisColor = spec?.irisColor || '#1e293b';
+  if (!spec?.irisColor) {
+    if (id === 'naruto' || id === 'boruto' || id === 'boa_hancock' || id === 'killua' || id === 'minato' || id === 'gohan') {
+      irisColor = id === 'boa_hancock' || id === 'naruto' || id === 'boruto' || id === 'killua' ? '#0284c7' : '#1e293b';
+    } else if (id === 'ichigo' || id === 'gon') {
+      irisColor = '#b45309';
+    } else if (id === 'zoro' || id === 'ulquiorra') {
+      irisColor = '#15803d';
+    } else if (id === 'beerus') {
+      irisColor = '#f59e0b';
+    } else if (id === 'whis') {
+      irisColor = '#7e22ce';
+    } else if (id === 'hisoka') {
+      irisColor = '#eab308';
+    } else if (id === 'law') {
+      irisColor = '#ca8a04';
+    } else if (isFemale) {
+      irisColor = '#1e3a8a';
+    }
+  }
+
+  // 4. Draw Eyes
+  const drawSingleEye = (cx: number, isLeftCharacterSide: boolean) => {
+    // Kakashi hides character's right eye behind slanted headband unless overridden, or shows dark normal eye + sharingan on left eye
+    if (id === 'kakashi' && !isLeftCharacterSide && eyeStyle === 'auto' && exp === 'auto') {
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(cx - 14, ey - 10, 28, 18);
+      return;
+    }
+
+    // Zoro keeps character's left eye closed with vertical slash scar when auto
+    if (id === 'zoro' && isLeftCharacterSide && exp === 'auto' && eyeStyle === 'auto') {
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx - 11, ey + 1);
+      ctx.lineTo(cx + 11, ey - 1);
+      ctx.stroke();
+      // Vertical scar across eye
+      ctx.strokeStyle = '#991b1b';
+      ctx.lineWidth = 2.8;
+      ctx.beginPath();
+      ctx.moveTo(cx + 2, ey - 16);
+      ctx.lineTo(cx - 3, ey + 18);
+      ctx.stroke();
+      return;
+    }
+
+    // Kenpachi wears black eyepatch over character's right eye (viewer left)
+    if (id === 'kenpachi' && !isLeftCharacterSide && eyeStyle === 'auto') {
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(14, 34);
+      ctx.lineTo(cx + 14, ey + 12);
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.ellipse(cx, ey, 14, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    // Laughing closed happy curved eyes (^ ^)
+    if (exp === 'laugh' && eyeStyle === 'auto') {
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 3.4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(cx, ey + 5, 11, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.stroke();
+      return;
+    }
+
+    // Shocked huge round white eyes
+    if (exp === 'shocked') {
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(cx, ey, 14.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      if (effectiveEye === 'sharingan') {
+        drawSharinganIris(ctx, cx, ey, 6);
+      } else if (effectiveEye === 'rinnegan') {
+        drawRinneganIris(ctx, cx, ey, 13, 13);
+      } else if (effectiveEye === 'imu') {
+        drawImuIris(ctx, cx, ey, 8);
+      } else if (effectiveEye === 'sage') {
+        drawSageIris(ctx, cx, ey, 7);
+      } else {
+        ctx.fillStyle = effectiveEye === 'ssj' ? '#14b8a6' : '#09090b';
+        ctx.beginPath();
+        ctx.arc(cx, ey, 4.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return;
+    }
+
+    // Beerus cat-like yellow slanted eyes
+    if (id === 'beerus' && eyeStyle === 'auto') {
+      ctx.fillStyle = '#facc15';
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.ellipse(cx, ey, 12, 7.5, isLeftCharacterSide ? -0.25 : 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.ellipse(cx, ey, 2.3, 6.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    // Zeno big wide circular dark eyes
+    if (id === 'zeno' && eyeStyle === 'auto' && exp === 'auto') {
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.ellipse(cx, ey, 11.5, 13, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx - 3.5, ey - 4, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    // Standard / Anime Sclera
+    const eyeRx = 12.5;
+    const eyeRy =
+      exp === 'cool' || exp === 'sleepy'
+        ? 8.0
+        : exp === 'chibi'
+          ? 14.5
+          : id === 'gon' || id === 'luffy' || id === 'luffy_gear5'
+            ? 13
+            : 11.5;
+
+    ctx.fillStyle = spec?.scleraColor || (effectiveEye === 'upper_moon' ? '#fef3c7' : '#ffffff');
+    ctx.beginPath();
+    ctx.ellipse(cx, ey, eyeRx, eyeRy, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Iris rendering
+    const ir = effectiveEye === 'ssj' ? 8 : 8.8;
+    if (effectiveEye === 'sharingan') {
+      drawSharinganIris(ctx, cx, ey, ir);
+    } else if (effectiveEye === 'mangekyou') {
+      drawMangekyouIris(ctx, cx, ey, ir);
+    } else if (effectiveEye === 'rinnegan') {
+      drawRinneganIris(ctx, cx, ey, eyeRx - 0.5, eyeRy - 0.5);
+    } else if (effectiveEye === 'imu') {
+      drawImuIris(ctx, cx, ey, ir);
+    } else if (effectiveEye === 'sage') {
+      drawSageIris(ctx, cx, ey, ir);
+    } else if (effectiveEye === 'byakugan') {
+      ctx.fillStyle = '#e0e7ff';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#6366f1';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.fillStyle = '#c7d2fe';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (effectiveEye === 'kyuubi') {
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.ellipse(cx, ey, 2.2, ir * 0.88, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (effectiveEye === 'nika') {
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(cx, ey, 8.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.arc(cx, ey, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (effectiveEye === 'mihawk') {
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir * 0.62, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.arc(cx, ey, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (effectiveEye === 'six_eyes') {
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#bae6fd';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx + 2.8, ey - 3, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (effectiveEye === 'sukuna') {
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.arc(cx, ey, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.arc(cx + 2.5, ey - 2.5, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (effectiveEye === 'ssj') {
+      ctx.fillStyle = '#14b8a6';
+      ctx.beginPath();
+      ctx.ellipse(cx, ey, 8.2, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#0f766e';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.arc(cx, ey, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx + 3, ey - 3.5, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (effectiveEye === 'ui') {
+      ctx.fillStyle = '#cbd5e1';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.arc(cx, ey, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx + 2.5, ey - 2.5, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (effectiveEye === 'upper_moon') {
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#991b1b';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.fillStyle = '#09090b';
+      ctx.fillRect(cx - 2, ey - 4, 4, 8);
+    } else if (effectiveEye === 'geass') {
+      ctx.fillStyle = '#6366f1';
+      ctx.beginPath();
+      ctx.arc(cx, ey, ir, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#f43f5e';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(cx - 4, ey - 2);
+      ctx.lineTo(cx, ey + 4);
+      ctx.lineTo(cx + 4, ey - 2);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = irisColor;
+      ctx.beginPath();
+      ctx.ellipse(cx, ey + 0.5, 8.4, 9.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.arc(cx, ey + 1, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx + 3.2, ey - 3.6, 2.7, 0, Math.PI * 2);
+      ctx.fill();
+      if (id === 'gon' || isFemale || exp === 'chibi' || exp === 'shy') {
+        ctx.beginPath();
+        ctx.arc(cx - 2.6, ey + 3.6, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Thick anime upper eyelid
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = isFemale || id === 'gon' ? 3.4 : 2.8;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (exp === 'cool' || exp === 'sleepy') {
+      ctx.moveTo(cx - eyeRx, ey - 2);
+      ctx.lineTo(cx + eyeRx, ey - 2);
+    } else {
+      ctx.ellipse(cx, ey, eyeRx, eyeRy, 0, Math.PI * 1.08, Math.PI * 1.92);
+    }
+    ctx.stroke();
+
+    // Feminine curved outer eyelashes
+    if (isFemale || id === 'gon') {
+      const dir = isLeftCharacterSide ? 1 : -1;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(cx + dir * 11, ey - 5);
+      ctx.lineTo(cx + dir * 16, ey - 9);
+      ctx.moveTo(cx + dir * 12, ey - 1);
+      ctx.lineTo(cx + dir * 17, ey - 3);
+      ctx.stroke();
+    }
+
+    // Character eye scars
+    if (id === 'kakashi' && isLeftCharacterSide) {
+      ctx.strokeStyle = '#7f1d1d';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(cx + 1, ey - 15);
+      ctx.lineTo(cx - 2, ey + 15);
+      ctx.stroke();
+    } else if (id === 'boruto' && !isLeftCharacterSide) {
+      ctx.strokeStyle = '#991b1b';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(cx - 2, ey - 14);
+      ctx.lineTo(cx + 3, ey + 15);
+      ctx.stroke();
+    } else if ((id === 'shanks' || faceMark === 'shanks_scar') && isLeftCharacterSide) {
+      ctx.strokeStyle = '#991b1b';
+      ctx.lineWidth = 2;
+      [-4, 0, 4].forEach((ox) => {
+        ctx.beginPath();
+        ctx.moveTo(cx + ox - 3, ey - 14);
+        ctx.lineTo(cx + ox + 4, ey + 14);
+        ctx.stroke();
+      });
+    } else if ((id === 'kenpachi' || faceMark === 'kenpachi_scar') && isLeftCharacterSide) {
+      ctx.strokeStyle = '#991b1b';
+      ctx.lineWidth = 2.8;
+      ctx.beginPath();
+      ctx.moveTo(74, 34);
+      ctx.lineTo(106, 76);
+      ctx.stroke();
+    }
+  };
+
+  drawSingleEye(lx, false);
+  drawSingleEye(rx, true);
+
+  // Sanji blonde swept bang covering character's right eye + curly eyebrow on left eye
+  if (id === 'sanji' && exp === 'auto' && eyeStyle === 'auto') {
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath();
+    ctx.moveTo(16, 22);
+    ctx.lineTo(58, 22);
+    ctx.lineTo(50, 66);
+    ctx.lineTo(20, 58);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 5. Eyebrows
+  const browColor = isElder
+    ? '#f8fafc'
+    : id === 'goku_ssj' || eyeStyle === 'ssj'
+      ? '#facc15'
+      : id === 'zoro'
+        ? '#15803d'
+        : id === 'sakura'
+          ? '#db2777'
+          : opts.hairColor && opts.hairColor !== '#ffffff'
+            ? '#09090b'
+            : '#1e293b';
+
+  if (id === 'sanji') {
+    // Sanji's iconic spiral curly eyebrow
+    ctx.strokeStyle = '#b45309';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(rx - 12, 36);
+    ctx.quadraticCurveTo(rx, 31, rx + 11, 37);
+    ctx.arc(rx + 8, 39, 3.5, 0, Math.PI * 1.6);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = browColor;
+    ctx.lineWidth = isElder ? 4.4 : id === 'madara' || id === 'vegeta' ? 3.8 : 2.8;
+    ctx.lineCap = 'round';
+    if (exp === 'angry' || (exp === 'auto' && (id === 'vegeta' || id === 'piccolo' || id === 'zoro' || id === 'madara' || id === 'kenpachi'))) {
+      ctx.beginPath();
+      ctx.moveTo(lx - 13, 33);
+      ctx.lineTo(lx + 12, 41);
+      ctx.moveTo(rx + 13, 33);
+      ctx.lineTo(rx - 12, 41);
+      ctx.stroke();
+    } else if (exp === 'sad') {
+      ctx.beginPath();
+      ctx.moveTo(lx - 12, 40);
+      ctx.lineTo(lx + 11, 34);
+      ctx.moveTo(rx + 12, 40);
+      ctx.lineTo(rx - 11, 34);
+      ctx.stroke();
+    } else if (exp === 'annoyed') {
+      ctx.beginPath();
+      ctx.moveTo(lx - 12, 36);
+      ctx.lineTo(lx + 11, 39);
+      ctx.moveTo(rx - 11, 35);
+      ctx.lineTo(rx + 12, 32);
+      ctx.stroke();
+    } else if (exp === 'shocked') {
+      ctx.beginPath();
+      ctx.arc(lx, 36, 12, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(rx, 36, 12, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.stroke();
+    } else if (id === 'luffy_gear5' && exp === 'auto') {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3.2;
+      [lx, rx].forEach((bx) => {
+        ctx.beginPath();
+        ctx.arc(bx, 35, 8, 0, Math.PI * 1.6);
+        ctx.stroke();
+      });
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(lx - 12, 37);
+      ctx.quadraticCurveTo(lx, 33, lx + 11, 36);
+      ctx.moveTo(rx - 11, 36);
+      ctx.quadraticCurveTo(rx, 33, rx + 12, 37);
+      ctx.stroke();
+    }
+  }
+
+  // Vegeta furrowed V-brow forehead crease
+  if (id === 'vegeta') {
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(57, 36);
+    ctx.lineTo(62, 43);
+    ctx.moveTo(71, 36);
+    ctx.lineTo(66, 43);
+    ctx.stroke();
+  }
+
+  // 6. Elder wrinkles & teardrops
+  if (isElder) {
+    ctx.strokeStyle = 'rgba(120, 53, 15, 0.45)';
+    ctx.lineWidth = 1.6;
+    [22, 27].forEach((wy) => {
+      ctx.beginPath();
+      ctx.moveTo(42, wy);
+      ctx.quadraticCurveTo(64, wy - 2, 86, wy);
+      ctx.stroke();
+    });
+    // Cheek / under-eye age lines
+    ctx.beginPath();
+    ctx.moveTo(28, 68);
+    ctx.quadraticCurveTo(36, 75, 42, 82);
+    ctx.moveTo(100, 68);
+    ctx.quadraticCurveTo(92, 75, 86, 82);
+    ctx.stroke();
+  }
+
+  if (exp === 'sad') {
+    // Blue anime teardrops
+    ctx.fillStyle = '#38bdf8';
+    [lx - 6, rx + 6].forEach((tx) => {
+      ctx.beginPath();
+      ctx.moveTo(tx, 64);
+      ctx.quadraticCurveTo(tx + 5, 74, tx, 79);
+      ctx.quadraticCurveTo(tx - 5, 74, tx, 64);
+      ctx.fill();
+    });
+  } else if (exp === 'shocked') {
+    // Anime sweat drop on temple
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.moveTo(110, 28);
+    ctx.quadraticCurveTo(116, 39, 110, 44);
+    ctx.quadraticCurveTo(104, 39, 110, 28);
+    ctx.fill();
+  }
+
+  // 7. Otaku Glasses Overlay (when expression === 'otaku_glasses')
+  if (exp === 'otaku_glasses') {
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 3.2;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    [lx, rx].forEach((gx) => {
+      ctx.fillRect(gx - 15, ey - 11, 30, 21);
+      ctx.strokeRect(gx - 15, ey - 11, 30, 21);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(gx - 10, ey + 6);
+      ctx.lineTo(gx + 8, ey - 8);
+      ctx.stroke();
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 3.2;
+    });
+    ctx.beginPath();
+    ctx.moveTo(lx + 15, ey - 2);
+    ctx.lineTo(rx - 15, ey - 2);
+    ctx.stroke();
+  }
+
+  // 8. Nose & Mouth (Ninja mask covers lower face)
+  if (id === 'kakashi' || exp === 'ninja_mask') {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 69, W, H - 69);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 69);
+    ctx.lineTo(W, 69);
+    ctx.stroke();
+    return;
+  }
+
+  if (id === 'beerus') {
+    ctx.fillStyle = '#4c1d95';
+    ctx.beginPath();
+    ctx.moveTo(58, 69);
+    ctx.lineTo(70, 69);
+    ctx.lineTo(64, 75);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#3b0764';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(14, 70); ctx.lineTo(30, 72);
+    ctx.moveTo(14, 77); ctx.lineTo(30, 76);
+    ctx.moveTo(114, 70); ctx.lineTo(98, 72);
+    ctx.moveTo(114, 77); ctx.lineTo(98, 76);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = 'rgba(120, 53, 15, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(64, 64);
+    ctx.lineTo(62, 71);
+    ctx.lineTo(66, 72);
+    ctx.stroke();
+  }
+
+  // Mouth
+  const my = 89;
+  if (exp === 'laugh' || (exp === 'auto' && (id === 'luffy' || id === 'luffy_gear5'))) {
+    ctx.fillStyle = '#7f1d1d';
+    ctx.beginPath();
+    ctx.moveTo(44, my - 3);
+    ctx.lineTo(84, my - 3);
+    ctx.quadraticCurveTo(64, my + 20, 44, my - 3);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(48, my - 3, 32, 6);
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  } else if (exp === 'angry') {
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.rect(49, my - 3, 30, 9);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(57, my - 3); ctx.lineTo(57, my + 6);
+    ctx.moveTo(71, my - 3); ctx.lineTo(71, my + 6);
+    ctx.stroke();
+  } else if (exp === 'annoyed') {
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(52, my + 3);
+    ctx.quadraticCurveTo(64, my - 2, 76, my + 4);
+    ctx.stroke();
+  } else if (exp === 'sad') {
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(51, my + 6);
+    ctx.quadraticCurveTo(64, my - 4, 77, my + 6);
+    ctx.stroke();
+  } else if (exp === 'shocked' || exp === 'sleepy') {
+    ctx.fillStyle = '#7f1d1d';
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.ellipse(64, my + 3, exp === 'sleepy' ? 6 : 9, exp === 'sleepy' ? 7 : 11, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (exp === 'chibi') {
+    // Cute ":3" cat smile
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.arc(58, my, 6, 0, Math.PI);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(70, my, 6, 0, Math.PI);
+    ctx.stroke();
+  } else if (exp === 'cool' || id === 'killua' || id === 'ace' || id === 'vegeta') {
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(53, my + 1);
+    ctx.quadraticCurveTo(66, my + 5, 78, my - 3);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = isFemale ? '#be123c' : '#7c2d12';
+    ctx.lineWidth = isFemale ? 2.8 : 2.6;
+    ctx.beginPath();
+    ctx.moveTo(51, my - 1);
+    ctx.quadraticCurveTo(64, my + 9, 77, my - 1);
+    ctx.stroke();
+    if (id === 'piccolo') {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(53, my);
+      ctx.lineTo(56, my + 5);
+      ctx.lineTo(59, my + 1);
+      ctx.fill();
+    }
+  }
+
+  // Trafalgar Law goatee
+  if (id === 'law') {
+    ctx.fillStyle = '#09090b';
+    ctx.beginPath();
+    ctx.moveTo(58, 102);
+    ctx.lineTo(70, 102);
+    ctx.lineTo(64, 116);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Character-specific Mustaches (Shirohige, Roger)
+  if (faceMark === 'shirohige_stache' || faceMark === 'roger_stache') {
+    ctx.fillStyle = faceMark === 'shirohige_stache' ? '#f8fafc' : '#09090b';
+    ctx.strokeStyle = faceMark === 'shirohige_stache' ? '#94a3b8' : '#09090b';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(64, 79);
+    ctx.quadraticCurveTo(38, 72, 22, 86);
+    ctx.quadraticCurveTo(44, 88, 64, 84);
+    ctx.quadraticCurveTo(84, 88, 106, 86);
+    ctx.quadraticCurveTo(90, 72, 64, 79);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Elder white mustache & beard
+  if (isElder) {
+    ctx.fillStyle = '#f8fafc';
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(64, 82);
+    ctx.quadraticCurveTo(46, 79, 36, 90);
+    ctx.quadraticCurveTo(50, 91, 64, 86);
+    ctx.quadraticCurveTo(78, 91, 92, 90);
+    ctx.quadraticCurveTo(82, 79, 64, 82);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(46, 98);
+    ctx.lineTo(82, 98);
+    ctx.quadraticCurveTo(78, 122, 64, 124);
+    ctx.quadraticCurveTo(50, 122, 46, 98);
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+export function getAnimeFaceTexture(opts: AnimeFaceOptions): THREE.CanvasTexture {
+  const s = opts.spec;
+  const key = [
+    opts.characterId,
+    opts.expression || 'auto',
+    opts.age || 'young',
+    opts.eyeStyle || 'auto',
+    opts.isFemale || s?.isFemale ? 'F' : 'M',
+    opts.hairColor || '',
+    s?.faceMark || '',
+    s?.defaultEye || '',
+    s?.defaultExpression || '',
+    s?.irisColor || '',
+    s?.scleraColor || '',
+    s?.imuSilhouette ? 'imu' : '',
+  ].join('|');
+
+  const existing = faceTextureCache.get(key);
+  if (existing) {
+    existing.refs += 1;
+    faceTextureCache.delete(key);
+    faceTextureCache.set(key, existing);
+    return existing.texture;
+  }
+
+  if (faceTextureCache.size >= MAX_FACE_CACHE) {
+    for (const [oldKey, oldEntry] of faceTextureCache.entries()) {
+      if (oldEntry.refs <= 0) {
+        oldEntry.texture.dispose();
+        faceTextureCache.delete(oldKey);
+        break;
+      }
+    }
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    drawAnimeFaceCanvas(ctx, opts);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.userData.faceCacheKey = key;
+  faceTextureCache.set(key, { texture: tex, refs: 1 });
   return tex;
 }
 
@@ -150,25 +1374,22 @@ function getDailyOutfitTexture(outfit: OutfitType, baseHex: string): THREE.Canva
       ctx.fillRect(0, y, w, 2);
     }
 
-    if (outfit === 'windbreaker') {
-      // Two-tone mountain jacket panels, seam piping, zipper teeth & chest pockets
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.42)';
+    if (outfit === 'windbreaker' || outfit === 'outdoor_vest') {
+      // Two-tone mountain jacket / female outdoor vest panels
+      ctx.fillStyle = outfit === 'outdoor_vest' ? 'rgba(255,255,255,0.22)' : 'rgba(15, 23, 42, 0.42)';
       ctx.fillRect(0, 0, w, h * 0.28);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
       ctx.fillRect(0, h * 0.28, w, 6);
-      // Center zipper track
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(w * 0.485, 0, w * 0.03, h);
       ctx.fillStyle = '#e2e8f0';
       for (let y = 16; y < h - 16; y += 14) {
         ctx.fillRect(w * 0.492, y, w * 0.016, 6);
       }
-      // Side pockets & reflective tape
       ctx.strokeStyle = 'rgba(248,250,252,0.5)';
       ctx.lineWidth = 5;
       ctx.strokeRect(w * 0.14, h * 0.56, w * 0.24, h * 0.28);
       ctx.strokeRect(w * 0.62, h * 0.56, w * 0.24, h * 0.28);
-      // Expedition mountain crest on left chest
       ctx.fillStyle = '#fbbf24';
       ctx.beginPath();
       ctx.moveTo(w * 0.72, h * 0.42);
@@ -176,8 +1397,30 @@ function getDailyOutfitTexture(outfit: OutfitType, baseHex: string): THREE.Canva
       ctx.lineTo(w * 0.84, h * 0.42);
       ctx.closePath();
       ctx.fill();
+    } else if (outfit === 'tactical_vest') {
+      // Adventure T-shirt base with tactical chest vest straps & pockets
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(w * 0.08, h * 0.12, w * 0.34, h * 0.8);
+      ctx.fillRect(w * 0.58, h * 0.12, w * 0.34, h * 0.8);
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 6;
+      ctx.strokeRect(w * 0.14, h * 0.52, w * 0.22, h * 0.24);
+      ctx.strokeRect(w * 0.64, h * 0.52, w * 0.22, h * 0.24);
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(w * 0.18, h * 0.3, w * 0.12, 16);
+    } else if (outfit === 'tunic') {
+      // Modest long tunic front placket & subtle embroidery trim
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.fillRect(w * 0.46, 0, w * 0.08, h * 0.62);
+      ctx.fillStyle = '#fde68a';
+      [0.2, 0.34, 0.48].forEach((yp) => {
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * yp, 7, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.fillRect(0, h * 0.88, w, h * 0.06);
     } else if (outfit === 'casual') {
-      // Adventure T-shirt ribbed neckline & subtle mountain chest print
       ctx.strokeStyle = 'rgba(255,255,255,0.35)';
       ctx.lineWidth = 8;
       ctx.beginPath();
@@ -191,7 +1434,6 @@ function getDailyOutfitTexture(outfit: OutfitType, baseHex: string): THREE.Canva
       ctx.closePath();
       ctx.fill();
     } else if (outfit === 'formal') {
-      // Tailored suit lapels, buttons & pocket square
       ctx.fillStyle = 'rgba(0,0,0,0.22)';
       ctx.fillRect(w * 0.47, h * 0.5, w * 0.06, h * 0.5);
       ctx.fillStyle = '#f8fafc';
@@ -203,7 +1445,6 @@ function getDailyOutfitTexture(outfit: OutfitType, baseHex: string): THREE.Canva
         ctx.fill();
       });
     } else if (outfit === 'school') {
-      // Crisp Indonesian school shirt seam, pocket & badge
       ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 4;
       ctx.strokeRect(w * 0.64, h * 0.38, w * 0.18, h * 0.22);
@@ -269,533 +1510,661 @@ function getSupermanCrestTexture(): THREE.CanvasTexture {
   });
 }
 
-function getCostumeChestTexture(suit: CharacterCostumeId, spec: CostumeStyleSpec): THREE.CanvasTexture | null {
-  if (suit === 'spiderman') return getSpiderWebTexture();
-  return getProceduralTexture(`costume_512_${suit}`, (ctx, w, h) => {
-    ctx.fillStyle = spec.torso;
-    ctx.fillRect(0, 0, w, h);
+function getCostumeChestTexture(
+  suit: CharacterCostumeId,
+  spec: CostumeStyleSpec,
+  formId = 'base',
+): THREE.CanvasTexture | null {
+  if (suit === 'spiderman' && formId !== 'symbiote') return getSpiderWebTexture();
+  if (spec.imuSilhouette) return null;
+  return getProceduralTexture(
+    `costume_256_${suit}_${formId}`,
+    (ctx, w, h) => {
+      ctx.fillStyle = spec.torso;
+      ctx.fillRect(0, 0, w, h);
 
-    // Subtle shading folds
-    const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, 'rgba(255,255,255,0.08)');
-    grad.addColorStop(1, 'rgba(0,0,0,0.22)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(255,255,255,0.08)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.22)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
 
-    if (suit === 'luffy' || suit === 'luffy_gear5' || suit === 'ace') {
-      // Open vest showing chest skin + Luffy X-scar
-      ctx.fillStyle = spec.skin || '#f1c27d';
-      ctx.fillRect(w * 0.3, 0, w * 0.4, h);
-      if (suit === 'luffy' || suit === 'luffy_gear5') {
-        ctx.strokeStyle = '#b91c1c';
-        ctx.lineWidth = 18;
-        ctx.beginPath();
-        ctx.moveTo(w * 0.36, h * 0.28);
-        ctx.lineTo(w * 0.64, h * 0.56);
-        ctx.moveTo(w * 0.64, h * 0.28);
-        ctx.lineTo(w * 0.36, h * 0.56);
-        ctx.stroke();
-      }
-      // Yellow/purple waist sash
-      ctx.fillStyle = spec.accent;
-      ctx.fillRect(0, h * 0.82, w, h * 0.18);
-    } else if (suit === 'zoro') {
-      // Green kimono folds + red haramaki sash
-      ctx.strokeStyle = '#052e16';
-      ctx.lineWidth = 12;
-      ctx.beginPath();
-      ctx.moveTo(w * 0.25, 0);
-      ctx.lineTo(w * 0.65, h * 0.72);
-      ctx.stroke();
-      ctx.fillStyle = '#dc2626';
-      ctx.fillRect(0, h * 0.74, w, h * 0.26);
-    } else if (suit === 'kaido') {
-      // Bare chest with red dragon-scale tattoo + purple belt
-      ctx.strokeStyle = '#991b1b';
-      ctx.lineWidth = 14;
-      for (let i = 0; i < 4; i++) {
-        ctx.beginPath();
-        ctx.arc(w * 0.24, h * (0.25 + i * 0.14), 36, 0, Math.PI);
-        ctx.stroke();
-      }
-      ctx.fillStyle = '#7e22ce';
-      ctx.fillRect(0, h * 0.78, w, h * 0.22);
-    } else if (suit === 'boa_hancock') {
-      // Crimson-purple cheongsam with golden snake/dragon motif
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 10;
-      ctx.strokeRect(w * 0.14, h * 0.08, w * 0.72, h * 0.84);
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.48, 72, 0, Math.PI * 1.6);
-      ctx.stroke();
-    } else if (suit === 'mihawk' || suit === 'shanks' || suit === 'sanji') {
-      // V-neck collar / vest & shirt layers
-      ctx.fillStyle = suit === 'sanji' ? '#eab308' : suit === 'mihawk' ? '#f1c27d' : '#f8fafc';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.34, 0);
-      ctx.lineTo(w * 0.5, h * 0.48);
-      ctx.lineTo(w * 0.66, 0);
-      ctx.closePath();
-      ctx.fill();
-      if (suit === 'shanks') {
-        ctx.fillStyle = '#dc2626';
-        ctx.fillRect(0, h * 0.78, w, h * 0.22);
-      }
-    } else if (suit === 'law') {
-      // Yellow/black hoodie + Heart Pirates emblem
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, 0, w, h * 0.22);
-      ctx.fillStyle = '#0f172a';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.5, 68, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#facc15';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.5, 42, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (suit === 'naruto' || suit === 'boruto' || suit === 'jiraiya') {
-      // Orange/dark tracksuit zipper + Konoha/Uzumaki spiral crest
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, 0, w, h * 0.24);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillRect(w * 0.48, h * 0.24, w * 0.04, h * 0.76);
-      ctx.strokeStyle = '#dc2626';
-      ctx.lineWidth = 10;
-      ctx.beginPath();
-      ctx.arc(w * 0.72, h * 0.42, 26, 0, Math.PI * 1.7);
-      ctx.stroke();
-    } else if (suit === 'hashirama' || suit === 'tobirama' || suit === 'madara') {
-      // Sengoku segmented lamellar armor plates & rivets
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 8;
-      for (let y = 72; y < h; y += 72) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-      }
-      ctx.fillStyle = '#facc15';
-      [w * 0.2, w * 0.8].forEach((rx) => {
-        for (let y = 36; y < h; y += 72) {
+      const pat = spec.chestPattern;
+      if (pat === 'open_vest' || suit === 'luffy' || suit === 'luffy_gear5' || suit === 'ace') {
+        ctx.fillStyle = spec.skin || '#f1c27d';
+        ctx.fillRect(w * 0.3, 0, w * 0.4, h);
+        if (suit === 'luffy' || suit === 'luffy_gear5' || pat === 'open_vest') {
+          ctx.strokeStyle = '#b91c1c';
+          ctx.lineWidth = 9;
           ctx.beginPath();
-          ctx.arc(rx, y, 8, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.moveTo(w * 0.36, h * 0.28);
+          ctx.lineTo(w * 0.64, h * 0.56);
+          ctx.moveTo(w * 0.64, h * 0.28);
+          ctx.lineTo(w * 0.36, h * 0.56);
+          ctx.stroke();
         }
-      });
-    } else if (suit === 'kakashi' || suit === 'minato') {
-      // Chunin/Jonin flak vest pockets & scroll pouches
-      ctx.fillStyle = '#14532d';
-      ctx.strokeStyle = '#052e16';
-      ctx.lineWidth = 6;
-      ctx.fillRect(w * 0.14, h * 0.26, w * 0.28, h * 0.28);
-      ctx.strokeRect(w * 0.14, h * 0.26, w * 0.28, h * 0.28);
-      ctx.fillRect(w * 0.58, h * 0.26, w * 0.28, h * 0.28);
-      ctx.strokeRect(w * 0.58, h * 0.26, w * 0.28, h * 0.28);
-    } else if (suit === 'itachi' || suit === 'obito') {
-      // Akatsuki red cloud motifs on black cloak
-      const drawCloud = (cx: number, cy: number) => {
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.82, w, h * 0.18);
+      } else if (pat === 'scales_dark' || pat === 'scales_azure') {
+        ctx.strokeStyle = pat === 'scales_azure' ? '#38bdf8' : '#7c3aed';
+        ctx.lineWidth = 4;
+        for (let row = 0; row < 5; row++) {
+          for (let col = 0; col < 5; col++) {
+            ctx.beginPath();
+            ctx.arc(w * (0.12 + col * 0.19), h * (0.14 + row * 0.16), 18, 0, Math.PI);
+            ctx.stroke();
+          }
+        }
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.78, w, h * 0.22);
+      } else if (pat === 'haki_armor') {
+        ctx.strokeStyle = '#dc2626';
+        ctx.lineWidth = 8;
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.arc(w * 0.5, h * 0.45, 22 + i * 18, 0, Math.PI * 1.4);
+          ctx.stroke();
+        }
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.8, w, h * 0.2);
+      } else if (pat === 'bandages') {
+        ctx.fillStyle = '#e2e8f0';
+        for (let y = 12; y < h; y += 34) {
+          ctx.save();
+          ctx.translate(w / 2, y);
+          ctx.rotate((y % 68 === 12 ? 1 : -1) * 0.14);
+          ctx.fillRect(-w * 0.52, -9, w * 1.04, 18);
+          ctx.restore();
+        }
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 2;
+        for (let y = 26; y < h; y += 34) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(w, y);
+          ctx.stroke();
+        }
+      } else if (pat === 'sukuna_marks') {
+        ctx.strokeStyle = '#09090b';
+        ctx.lineWidth = 10;
+        [0.24, 0.76].forEach((xr) => {
+          ctx.beginPath();
+          ctx.arc(w * xr, h * 0.35, 34, 0, Math.PI);
+          ctx.stroke();
+        });
+        ctx.fillStyle = '#09090b';
+        ctx.fillRect(w * 0.46, h * 0.15, w * 0.08, h * 0.65);
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.78, w, h * 0.22);
+      } else if (pat === 'survey_corps') {
+        // Survey Corps white harnesses + chest shield pocket
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(w * 0.2, 0, w * 0.1, h);
+        ctx.fillRect(w * 0.7, 0, w * 0.1, h);
+        ctx.fillRect(0, h * 0.78, w, h * 0.14);
+        ctx.fillStyle = '#1d4ed8';
+        ctx.fillRect(w * 0.64, h * 0.28, w * 0.18, h * 0.22);
+      } else if (pat === 'jjk_uniform') {
+        ctx.fillStyle = '#facc15';
+        ctx.beginPath();
+        ctx.arc(w * 0.68, h * 0.32, 11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#09090b';
+        ctx.fillRect(w * 0.48, 0, w * 0.04, h);
+      } else if (pat === 'kimono') {
+        ctx.strokeStyle = spec.accent;
+        ctx.lineWidth = 10;
+        ctx.beginPath();
+        ctx.moveTo(w * 0.22, 0);
+        ctx.lineTo(w * 0.68, h * 0.72);
+        ctx.moveTo(w * 0.78, 0);
+        ctx.lineTo(w * 0.32, h * 0.72);
+        ctx.stroke();
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.74, w, h * 0.22);
+      } else if (pat === 'royal_gold') {
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 8;
+        ctx.strokeRect(w * 0.12, h * 0.08, w * 0.76, h * 0.84);
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.42, 28, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillRect(0, h * 0.78, w, h * 0.18);
+      } else if (pat === 'doom_armor') {
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(w * 0.14, h * 0.12, w * 0.72, h * 0.65);
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.arc(w * 0.22, h * 0.2, 16, 0, Math.PI * 2);
+        ctx.arc(w * 0.78, h * 0.2, 16, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (pat === 'strange_amulet') {
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.38, 24, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.38, 13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.78, w, h * 0.18);
+      } else if (pat === 'shinto_robe') {
         ctx.fillStyle = '#dc2626';
-        ctx.strokeStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.25, 0);
+        ctx.lineTo(w * 0.5, h * 0.44);
+        ctx.lineTo(w * 0.75, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillRect(0, h * 0.74, w, h * 0.26);
+      } else if (pat === 'sternritter') {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(w * 0.46, 0, w * 0.08, h);
+        ctx.fillRect(0, h * 0.78, w, h * 0.18);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(w * 0.65, h * 0.28, 12, 34);
+        ctx.fillRect(w * 0.56, h * 0.36, 30, 10);
+      } else if (pat === 'spider_web') {
+        ctx.fillStyle = spec.accent;
+        ctx.beginPath();
+        ctx.ellipse(w * 0.5, h * 0.46, 26, 34, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (suit === 'zoro') {
+        ctx.strokeStyle = '#052e16';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(w * 0.25, 0);
+        ctx.lineTo(w * 0.65, h * 0.72);
+        ctx.stroke();
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(0, h * 0.74, w, h * 0.26);
+      } else if (suit === 'kaido') {
+        ctx.strokeStyle = '#991b1b';
+        ctx.lineWidth = 7;
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.arc(w * 0.24, h * (0.25 + i * 0.14), 18, 0, Math.PI);
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#7e22ce';
+        ctx.fillRect(0, h * 0.78, w, h * 0.22);
+      } else if (suit === 'boa_hancock') {
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(w * 0.14, h * 0.08, w * 0.72, h * 0.84);
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.48, 36, 0, Math.PI * 1.6);
+        ctx.stroke();
+      } else if (suit === 'mihawk' || suit === 'shanks' || suit === 'sanji') {
+        ctx.fillStyle = suit === 'sanji' ? '#eab308' : suit === 'mihawk' ? '#f1c27d' : '#f8fafc';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.34, 0);
+        ctx.lineTo(w * 0.5, h * 0.48);
+        ctx.lineTo(w * 0.66, 0);
+        ctx.closePath();
+        ctx.fill();
+        if (suit === 'shanks') {
+          ctx.fillStyle = '#dc2626';
+          ctx.fillRect(0, h * 0.78, w, h * 0.22);
+        }
+      } else if (suit === 'law') {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, w, h * 0.22);
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.5, 34, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#facc15';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.5, 21, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (suit === 'naruto' || suit === 'boruto' || suit === 'jiraiya') {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, w, h * 0.24);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(w * 0.48, h * 0.24, w * 0.04, h * 0.76);
+        ctx.strokeStyle = '#dc2626';
         ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.arc(cx, cy, 34, 0, Math.PI * 2);
-        ctx.arc(cx - 28, cy + 12, 24, 0, Math.PI * 2);
-        ctx.arc(cx + 28, cy + 12, 24, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(w * 0.72, h * 0.42, 13, 0, Math.PI * 1.7);
         ctx.stroke();
-      };
-      drawCloud(w * 0.28, h * 0.36);
-      drawCloud(w * 0.72, h * 0.68);
-    } else if (
-      suit === 'ichigo' ||
-      suit === 'gin' ||
-      suit === 'ichibe' ||
-      suit === 'kenpachi' ||
-      suit === 'toshiro' ||
-      suit === 'byakuya' ||
-      suit === 'rukia' ||
-      suit === 'yamamoto'
-    ) {
-      // Shinigami Shihakusho white V-undercollar & white waist obi sash
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.3, 0);
-      ctx.lineTo(w * 0.5, h * 0.42);
-      ctx.lineTo(w * 0.7, 0);
-      ctx.lineTo(w * 0.62, 0);
-      ctx.lineTo(w * 0.5, h * 0.28);
-      ctx.lineTo(w * 0.38, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillRect(0, h * 0.76, w, h * 0.14);
-    } else if (suit === 'ulquiorra' || suit === 'grimmjow') {
-      // Espada white jacket with black collar trim & hollow hole / abs reveal
-      ctx.fillStyle = '#09090b';
-      ctx.fillRect(w * 0.42, 0, w * 0.16, h);
-      if (suit === 'ulquiorra') {
-        ctx.fillStyle = '#10b981';
+      } else if (pat === 'armor_plates' || suit === 'hashirama' || suit === 'tobirama' || suit === 'madara') {
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 4;
+        for (let y = 36; y < h; y += 36) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(w, y);
+          ctx.stroke();
+        }
+        ctx.fillStyle = spec.accent;
+        [w * 0.2, w * 0.8].forEach((rx) => {
+          for (let y = 18; y < h; y += 36) {
+            ctx.beginPath();
+            ctx.arc(rx, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        });
+      } else if (suit === 'kakashi' || suit === 'minato') {
+        ctx.fillStyle = '#14532d';
+        ctx.strokeStyle = '#052e16';
+        ctx.lineWidth = 3;
+        ctx.fillRect(w * 0.14, h * 0.26, w * 0.28, h * 0.28);
+        ctx.strokeRect(w * 0.14, h * 0.26, w * 0.28, h * 0.28);
+        ctx.fillRect(w * 0.58, h * 0.26, w * 0.28, h * 0.28);
+        ctx.strokeRect(w * 0.58, h * 0.26, w * 0.28, h * 0.28);
+      } else if (pat === 'akatsuki' || suit === 'itachi' || suit === 'obito') {
+        const drawCloud = (cx: number, cy: number) => {
+          ctx.fillStyle = '#dc2626';
+          ctx.strokeStyle = '#f8fafc';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 17, 0, Math.PI * 2);
+          ctx.arc(cx - 14, cy + 6, 12, 0, Math.PI * 2);
+          ctx.arc(cx + 14, cy + 6, 12, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        };
+        drawCloud(w * 0.28, h * 0.36);
+        drawCloud(w * 0.72, h * 0.68);
+      } else if (
+        pat === 'shihakusho' ||
+        suit === 'ichigo' ||
+        suit === 'gin' ||
+        suit === 'ichibe' ||
+        suit === 'kenpachi' ||
+        suit === 'toshiro' ||
+        suit === 'byakuya' ||
+        suit === 'rukia' ||
+        suit === 'yamamoto'
+      ) {
+        ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
-        ctx.arc(w * 0.5, h * 0.36, 22, 0, Math.PI * 2);
+        ctx.moveTo(w * 0.3, 0);
+        ctx.lineTo(w * 0.5, h * 0.42);
+        ctx.lineTo(w * 0.7, 0);
+        ctx.lineTo(w * 0.62, 0);
+        ctx.lineTo(w * 0.5, h * 0.28);
+        ctx.lineTo(w * 0.38, 0);
+        ctx.closePath();
         ctx.fill();
-      } else {
-        ctx.fillStyle = '#f1c27d';
-        ctx.fillRect(w * 0.34, h * 0.24, w * 0.32, h * 0.56);
-      }
-    } else if (suit === 'ironman' || suit === 'k_cyber') {
-      // Segmented chest armor lines
-      ctx.strokeStyle = spec.accent;
-      ctx.lineWidth = 10;
-      ctx.strokeRect(w * 0.12, h * 0.12, w * 0.76, h * 0.76);
-      ctx.beginPath();
-      ctx.moveTo(w * 0.12, h * 0.45);
-      ctx.lineTo(w * 0.88, h * 0.45);
-      ctx.stroke();
-    } else if (suit === 'goku' || suit === 'goku_ssj' || suit === 'gohan') {
-      // Martial arts Gi V-collar showing blue/purple undershirt + chest kanji badge (+Z ONLY)
-      ctx.fillStyle = spec.accent;
-      ctx.beginPath();
-      ctx.moveTo(w * 0.3, 0);
-      ctx.lineTo(w * 0.5, h * 0.42);
-      ctx.lineTo(w * 0.7, 0);
-      ctx.closePath();
-      ctx.fill();
-      // Left chest kanji emblem
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.arc(w * 0.7, h * 0.34, 42, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#09090b';
-      ctx.font = '900 44px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(suit === 'gohan' ? '魔' : '悟', w * 0.7, h * 0.34);
-      // Waist sash
-      ctx.fillStyle = spec.accent;
-      ctx.fillRect(0, h * 0.78, w, h * 0.18);
-    } else if (suit === 'vegeta') {
-      // Saiyan white chest armor with gold ribbed chest plates & shoulder straps (+Z)
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(w * 0.08, h * 0.12, w * 0.84, h * 0.72);
-      ctx.fillStyle = '#eab308';
-      for (let y = h * 0.28; y <= h * 0.64; y += h * 0.12) {
-        ctx.fillRect(w * 0.14, y, w * 0.31, 14);
-        ctx.fillRect(w * 0.55, y, w * 0.31, 14);
-      }
-      ctx.fillRect(w * 0.14, 0, w * 0.14, h * 0.18);
-      ctx.fillRect(w * 0.72, 0, w * 0.14, h * 0.18);
-    } else if (suit === 'piccolo') {
-      // Purple Namekian Gi with blue belt & white collar
-      ctx.fillStyle = '#3b0764';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.32, 0);
-      ctx.lineTo(w * 0.5, h * 0.4);
-      ctx.lineTo(w * 0.68, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#2563eb';
-      ctx.fillRect(0, h * 0.78, w, h * 0.18);
-    } else if (suit === 'trunks') {
-      // Cropped blue Capsule Corp denim jacket over black tank top (+Z)
-      ctx.fillStyle = '#09090b';
-      ctx.fillRect(w * 0.3, 0, w * 0.4, h);
-      ctx.fillStyle = '#1e3a8a';
-      ctx.fillRect(w * 0.08, h * 0.14, w * 0.18, h * 0.2);
-      ctx.fillRect(w * 0.74, h * 0.14, w * 0.18, h * 0.2);
-      // Belt
-      ctx.fillStyle = '#78350f';
-      ctx.fillRect(0, h * 0.82, w, h * 0.18);
-    } else if (suit === 'beerus') {
-      // Egyptian God of Destruction collar, bare purple muscular chest & blue-gold sash (+Z)
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, 0, w, h * 0.3);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(0, h * 0.25, w, h * 0.06);
-      for (let sx = w * 0.14; sx <= w * 0.86; sx += w * 0.18) {
+        ctx.fillRect(0, h * 0.76, w, h * 0.14);
+      } else if (suit === 'ulquiorra' || suit === 'grimmjow') {
+        ctx.fillStyle = '#09090b';
+        ctx.fillRect(w * 0.42, 0, w * 0.16, h);
+        if (suit === 'ulquiorra') {
+          ctx.fillStyle = '#10b981';
+          ctx.beginPath();
+          ctx.arc(w * 0.5, h * 0.36, 11, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = '#f1c27d';
+          ctx.fillRect(w * 0.34, h * 0.24, w * 0.32, h * 0.56);
+        }
+      } else if (suit === 'ironman' || suit === 'k_cyber') {
+        ctx.strokeStyle = spec.accent;
+        ctx.lineWidth = 5;
+        ctx.strokeRect(w * 0.12, h * 0.12, w * 0.76, h * 0.76);
+        ctx.beginPath();
+        ctx.moveTo(w * 0.12, h * 0.45);
+        ctx.lineTo(w * 0.88, h * 0.45);
+        ctx.stroke();
+      } else if (pat === 'gi_symbol' || suit === 'goku' || suit === 'goku_ssj' || suit === 'gohan') {
+        ctx.fillStyle = spec.accent;
+        ctx.beginPath();
+        ctx.moveTo(w * 0.3, 0);
+        ctx.lineTo(w * 0.5, h * 0.42);
+        ctx.lineTo(w * 0.7, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(w * 0.7, h * 0.34, 21, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#09090b';
+        ctx.font = '900 22px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(suit === 'gohan' ? '魔' : '悟', w * 0.7, h * 0.34);
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.78, w, h * 0.18);
+      } else if (pat === 'saiyan_armor' || suit === 'vegeta') {
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(w * 0.08, h * 0.12, w * 0.84, h * 0.72);
+        ctx.fillStyle = '#eab308';
+        for (let y = h * 0.28; y <= h * 0.64; y += h * 0.12) {
+          ctx.fillRect(w * 0.14, y, w * 0.31, 7);
+          ctx.fillRect(w * 0.55, y, w * 0.31, 7);
+        }
+        ctx.fillRect(w * 0.14, 0, w * 0.14, h * 0.18);
+        ctx.fillRect(w * 0.72, 0, w * 0.14, h * 0.18);
+      } else if (suit === 'piccolo') {
+        ctx.fillStyle = '#3b0764';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.32, 0);
+        ctx.lineTo(w * 0.5, h * 0.4);
+        ctx.lineTo(w * 0.68, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#2563eb';
+        ctx.fillRect(0, h * 0.78, w, h * 0.18);
+      } else if (suit === 'trunks') {
+        ctx.fillStyle = '#09090b';
+        ctx.fillRect(w * 0.3, 0, w * 0.4, h);
+        ctx.fillStyle = '#1e3a8a';
+        ctx.fillRect(w * 0.08, h * 0.14, w * 0.18, h * 0.2);
+        ctx.fillRect(w * 0.74, h * 0.14, w * 0.18, h * 0.2);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(0, h * 0.82, w, h * 0.18);
+      } else if (suit === 'beerus') {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, w, h * 0.3);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(0, h * 0.25, w, h * 0.06);
+        for (let sx = w * 0.14; sx <= w * 0.86; sx += w * 0.18) {
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillRect(sx - 5, h * 0.04, 10, h * 0.2);
+        }
         ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(sx - 10, h * 0.04, 20, h * 0.2);
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.18, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#1d4ed8';
+        ctx.fillRect(0, h * 0.76, w, h * 0.24);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(w * 0.36, h * 0.78, w * 0.28, h * 0.18);
+      } else if (suit === 'whis') {
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.36, 35, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.36, 18, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.36, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(0, h * 0.74, w, h * 0.16);
+      } else if (suit === 'zeno') {
+        ctx.fillStyle = '#db2777';
+        ctx.fillRect(0, 0, w, h * 0.24);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(w * 0.34, 0, w * 0.32, h * 0.76);
+        ctx.fillRect(0, h * 0.76, w, h * 0.18);
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.44, 36, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#09090b';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.fillStyle = '#09090b';
+        ctx.font = '900 42px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('全', w * 0.5, h * 0.45);
+      } else if (suit === 'gon') {
+        ctx.fillStyle = '#f97316';
+        ctx.fillRect(w * 0.46, 0, w * 0.08, h * 0.88);
+        ctx.fillRect(0, 0, w, h * 0.14);
+        ctx.fillRect(0, h * 0.86, w, h * 0.14);
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.36, 0);
+        ctx.lineTo(w * 0.5, h * 0.24);
+        ctx.lineTo(w * 0.64, 0);
+        ctx.closePath();
+        ctx.fill();
+      } else if (suit === 'killua') {
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.32, 0);
+        ctx.lineTo(w * 0.5, h * 0.26);
+        ctx.lineTo(w * 0.68, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillRect(0, h * 0.84, w, h * 0.16);
+      } else if (suit === 'kurapika') {
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.34, 0);
+        ctx.lineTo(w * 0.5, h * 0.36);
+        ctx.lineTo(w * 0.66, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#f97316';
+        ctx.fillRect(0, h * 0.04, w, h * 0.08);
+        ctx.fillRect(0, h * 0.78, w, h * 0.16);
+      } else if (suit === 'leorio') {
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.32, 0);
+        ctx.lineTo(w * 0.5, h * 0.56);
+        ctx.lineTo(w * 0.68, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(w * 0.47, h * 0.04, w * 0.06, h * 0.48);
+      } else if (suit === 'hisoka') {
+        ctx.fillStyle = '#be185d';
+        ctx.fillRect(0, 0, w, h * 0.2);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(0, h * 0.78, w, h * 0.22);
+        ctx.font = '900 36px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#dc2626';
+        ctx.fillText('♦', w * 0.34, h * 0.42);
+        ctx.fillText('♥', w * 0.66, h * 0.62);
+        ctx.fillStyle = '#09090b';
+        ctx.fillText('♠', w * 0.66, h * 0.42);
+        ctx.fillText('♣', w * 0.34, h * 0.62);
+      } else {
+        // Crisp front V-collar & waist sash for remaining catalog costumes
+        ctx.fillStyle = spec.accent;
+        ctx.beginPath();
+        ctx.moveTo(w * 0.36, 0);
+        ctx.lineTo(w * 0.5, h * 0.32);
+        ctx.lineTo(w * 0.64, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillRect(0, h * 0.8, w, h * 0.16);
       }
-      ctx.fillStyle = '#38bdf8';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.18, 28, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.28)';
-      ctx.lineWidth = 6;
-      ctx.beginPath();
-      ctx.moveTo(w * 0.5, h * 0.34);
-      ctx.lineTo(w * 0.5, h * 0.72);
-      ctx.stroke();
-      // Royal blue & gold Egyptian waist sash
-      ctx.fillStyle = '#1d4ed8';
-      ctx.fillRect(0, h * 0.76, w, h * 0.24);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(w * 0.36, h * 0.78, w * 0.28, h * 0.18);
-    } else if (suit === 'whis') {
-      // Long maroon Angel robe with circular blue-white chest emblem & waist sash (+Z)
-      ctx.fillStyle = '#0f172a';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.36, 70, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 10;
-      ctx.stroke();
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.36, 36, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#38bdf8';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.36, 18, 0, Math.PI * 2);
-      ctx.fill();
-      // Diagonal blue-white angel sash
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(0, h * 0.74, w, h * 0.16);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(0, h * 0.8, w, h * 0.05);
-    } else if (suit === 'zeno') {
-      // Royal pink-yellow-blue outfit with front kanji 全 badge (+Z)
-      ctx.fillStyle = '#db2777';
-      ctx.fillRect(0, 0, w, h * 0.24);
-      ctx.fillStyle = '#facc15';
-      ctx.fillRect(w * 0.34, 0, w * 0.32, h * 0.76);
-      ctx.fillRect(0, h * 0.76, w, h * 0.18);
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.44, 72, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#09090b';
-      ctx.lineWidth = 7;
-      ctx.stroke();
-      ctx.fillStyle = '#09090b';
-      ctx.font = '900 84px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('全', w * 0.5, h * 0.45);
-    } else if (suit === 'gon') {
-      // Green jacket with orange collar & front trim (+Z)
-      ctx.fillStyle = '#f97316';
-      ctx.fillRect(w * 0.46, 0, w * 0.08, h * 0.88);
-      ctx.fillRect(0, 0, w, h * 0.14);
-      ctx.fillRect(0, h * 0.86, w, h * 0.14);
-      // Open V collar white undershirt
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.36, 0);
-      ctx.lineTo(w * 0.5, h * 0.24);
-      ctx.lineTo(w * 0.64, 0);
-      ctx.closePath();
-      ctx.fill();
-    } else if (suit === 'killua') {
-      // Navy vest over white shirt collar (+Z)
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.32, 0);
-      ctx.lineTo(w * 0.5, h * 0.26);
-      ctx.lineTo(w * 0.68, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillRect(0, h * 0.84, w, h * 0.16);
-    } else if (suit === 'kurapika') {
-      // Blue Kurta tabard with orange geometric hem + white front V (+Z)
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.34, 0);
-      ctx.lineTo(w * 0.5, h * 0.36);
-      ctx.lineTo(w * 0.66, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#f97316';
-      ctx.fillRect(0, h * 0.04, w, h * 0.08);
-      ctx.fillRect(0, h * 0.78, w, h * 0.16);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(w * 0.44, h * 0.81, w * 0.12, h * 0.1);
-    } else if (suit === 'leorio') {
-      // Dark navy suit jacket, white shirt & tie (+Z)
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.32, 0);
-      ctx.lineTo(w * 0.5, h * 0.56);
-      ctx.lineTo(w * 0.68, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(w * 0.47, h * 0.04, w * 0.06, h * 0.48);
-    } else if (suit === 'hisoka') {
-      // Magician vest with card suit symbols on chest (+Z)
-      ctx.fillStyle = '#be185d';
-      ctx.fillRect(0, 0, w, h * 0.2);
-      ctx.fillStyle = '#facc15';
-      ctx.fillRect(0, h * 0.78, w, h * 0.22);
-      ctx.font = '900 72px serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#dc2626';
-      ctx.fillText('♦', w * 0.34, h * 0.42);
-      ctx.fillText('♥', w * 0.66, h * 0.62);
-      ctx.fillStyle = '#09090b';
-      ctx.fillText('♠', w * 0.66, h * 0.42);
-      ctx.fillText('♣', w * 0.34, h * 0.62);
-    }
-  });
+    },
+    256,
+    256,
+  );
 }
 
-function getCostumeBackTexture(suit: CharacterCostumeId, spec: CostumeStyleSpec): THREE.CanvasTexture | null {
-  if (suit === 'spiderman') return getSpiderWebTexture();
-  return getProceduralTexture(`costume_back_512_${suit}`, (ctx, w, h) => {
-    ctx.fillStyle = spec.torso;
-    ctx.fillRect(0, 0, w, h);
+function getCostumeBackTexture(
+  suit: CharacterCostumeId,
+  spec: CostumeStyleSpec,
+  formId = 'base',
+): THREE.CanvasTexture | null {
+  if (suit === 'spiderman' && formId !== 'symbiote') return getSpiderWebTexture();
+  if (spec.imuSilhouette) return null;
+  return getProceduralTexture(
+    `costume_back_256_${suit}_${formId}`,
+    (ctx, w, h) => {
+      ctx.fillStyle = spec.torso;
+      ctx.fillRect(0, 0, w, h);
 
-    const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, 'rgba(255,255,255,0.06)');
-    grad.addColorStop(1, 'rgba(0,0,0,0.22)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(255,255,255,0.06)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.22)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
 
-    if (suit === 'luffy' || suit === 'luffy_gear5' || suit === 'ace') {
-      // Clean solid back of vest (NO chest X-scar on back!) + waist sash
-      ctx.fillStyle = spec.accent;
-      ctx.fillRect(0, h * 0.82, w, h * 0.18);
-      if (suit === 'ace') {
-        // Whitebeard pirate tattoo crest on Ace's bare back
-        ctx.fillStyle = '#7e22ce';
+      const pat = spec.chestPattern;
+      if (pat === 'survey_corps') {
+        // Survey Corps Wings of Freedom Emblem on back (-Z)
+        ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
-        ctx.arc(w * 0.5, h * 0.4, 52, 0, Math.PI * 2);
+        ctx.moveTo(w * 0.5, h * 0.25);
+        ctx.lineTo(w * 0.22, h * 0.38);
+        ctx.lineTo(w * 0.34, h * 0.62);
+        ctx.lineTo(w * 0.5, h * 0.48);
+        ctx.lineTo(w * 0.66, h * 0.62);
+        ctx.lineTo(w * 0.78, h * 0.38);
+        ctx.closePath();
         ctx.fill();
-        ctx.fillStyle = '#f1c27d';
-        ctx.fillRect(w * 0.45, h * 0.32, w * 0.1, h * 0.16);
+        ctx.fillStyle = '#2563eb';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.5, h * 0.28);
+        ctx.lineTo(w * 0.38, h * 0.56);
+        ctx.lineTo(w * 0.5, h * 0.44);
+        ctx.lineTo(w * 0.62, h * 0.56);
+        ctx.closePath();
+        ctx.fill();
+      } else if (pat === 'bandages') {
+        ctx.fillStyle = '#e2e8f0';
+        for (let y = 18; y < h; y += 34) {
+          ctx.fillRect(0, y, w, 16);
+        }
+      } else if (pat === 'scales_dark' || pat === 'scales_azure') {
+        ctx.strokeStyle = pat === 'scales_azure' ? '#38bdf8' : '#7c3aed';
+        ctx.lineWidth = 4;
+        for (let row = 0; row < 5; row++) {
+          ctx.beginPath();
+          ctx.moveTo(w * 0.16, h * (0.16 + row * 0.16));
+          ctx.lineTo(w * 0.84, h * (0.16 + row * 0.16));
+          ctx.stroke();
+        }
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.78, w, h * 0.22);
+      } else if (suit === 'luffy' || suit === 'luffy_gear5' || suit === 'ace' || pat === 'open_vest') {
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.82, w, h * 0.18);
+        if (suit === 'ace') {
+          ctx.fillStyle = '#7e22ce';
+          ctx.beginPath();
+          ctx.arc(w * 0.5, h * 0.4, 26, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#f1c27d';
+          ctx.fillRect(w * 0.45, h * 0.32, w * 0.1, h * 0.16);
+        }
+      } else if (suit === 'naruto' || suit === 'boruto' || suit === 'jiraiya') {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, w, h * 0.22);
+        ctx.strokeStyle = '#dc2626';
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.46, 38, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.46, 22, 0, Math.PI * 1.65);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.46, 8, 0, Math.PI * 1.8);
+        ctx.stroke();
+      } else if (suit === 'sasuke' || suit === 'itachi' || suit === 'madara' || suit === 'obito') {
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.38, 33, Math.PI, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.38, 33, 0, Math.PI);
+        ctx.fill();
+        ctx.fillRect(w * 0.47, h * 0.5, w * 0.06, 31);
+      } else if (
+        pat === 'shihakusho' ||
+        suit === 'ichigo' ||
+        suit === 'gin' ||
+        suit === 'ichibe' ||
+        suit === 'kenpachi' ||
+        suit === 'toshiro' ||
+        suit === 'byakuya' ||
+        suit === 'rukia' ||
+        suit === 'yamamoto'
+      ) {
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(0, h * 0.76, w, h * 0.14);
+      } else if (pat === 'gi_symbol' || suit === 'goku' || suit === 'goku_ssj' || suit === 'gohan') {
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.38, 43, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#09090b';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.fillStyle = '#09090b';
+        ctx.font = '900 48px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(suit === 'gohan' ? '魔' : '悟', w * 0.5, h * 0.39);
+        ctx.fillStyle = spec.accent;
+        ctx.fillRect(0, h * 0.78, w, h * 0.18);
+      } else if (pat === 'saiyan_armor' || suit === 'vegeta') {
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(w * 0.1, h * 0.12, w * 0.8, h * 0.7);
+        ctx.fillStyle = '#eab308';
+        ctx.fillRect(w * 0.14, 0, w * 0.14, h * 0.18);
+        ctx.fillRect(w * 0.72, 0, w * 0.14, h * 0.18);
+      } else if (suit === 'trunks') {
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(w * 0.5, h * 0.38, 29, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#09090b';
+        ctx.font = '900 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('CAPSULE', w * 0.5, h * 0.38);
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(0, h * 0.82, w, h * 0.18);
+      } else if (suit === 'beerus') {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, w, h * 0.14);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(0, h * 0.13, w, h * 0.04);
+        ctx.fillStyle = '#1d4ed8';
+        ctx.fillRect(0, h * 0.78, w, h * 0.22);
+      } else if (suit === 'whis') {
+        ctx.fillStyle = 'rgba(0,0,0,0.24)';
+        ctx.fillRect(w * 0.485, h * 0.08, w * 0.03, h * 0.66);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(0, h * 0.74, w, h * 0.16);
+      } else if (suit === 'zeno') {
+        ctx.fillStyle = '#db2777';
+        ctx.fillRect(0, 0, w, h * 0.16);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(0, h * 0.76, w, h * 0.18);
+      } else if (suit === 'hisoka') {
+        ctx.fillStyle = '#be185d';
+        ctx.beginPath();
+        ctx.moveTo(w * 0.5, h * 0.22);
+        ctx.lineTo(w * 0.68, h * 0.48);
+        ctx.lineTo(w * 0.5, h * 0.74);
+        ctx.lineTo(w * 0.32, h * 0.48);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(0, h * 0.78, w, h * 0.22);
+      } else {
+        ctx.fillStyle = 'rgba(0,0,0,0.18)';
+        ctx.fillRect(w * 0.488, h * 0.08, w * 0.024, h * 0.82);
       }
-    } else if (suit === 'naruto' || suit === 'boruto' || suit === 'jiraiya') {
-      // Uzumaki red spiral clan crest on back (-Z) - NO front zipper on back!
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, 0, w, h * 0.22);
-      ctx.strokeStyle = '#dc2626';
-      ctx.lineWidth = 14;
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.46, 76, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.46, 44, 0, Math.PI * 1.65);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.46, 16, 0, Math.PI * 1.8);
-      ctx.stroke();
-    } else if (suit === 'sasuke' || suit === 'itachi' || suit === 'madara' || suit === 'obito') {
-      // Uchiha Clan red-white fan crest on back (-Z)
-      ctx.fillStyle = '#dc2626';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.38, 66, Math.PI, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.38, 66, 0, Math.PI);
-      ctx.fill();
-      ctx.fillRect(w * 0.47, h * 0.5, w * 0.06, 62);
-    } else if (
-      suit === 'ichigo' ||
-      suit === 'gin' ||
-      suit === 'ichibe' ||
-      suit === 'kenpachi' ||
-      suit === 'toshiro' ||
-      suit === 'byakuya' ||
-      suit === 'rukia' ||
-      suit === 'yamamoto'
-    ) {
-      // Clean Shihakusho back with white waist obi sash ONLY (no front V-collar)
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(0, h * 0.76, w, h * 0.14);
-    } else if (suit === 'goku' || suit === 'goku_ssj' || suit === 'gohan') {
-      // Large Kanji crest on upper back (-Z) + waist sash
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.38, 86, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#09090b';
-      ctx.lineWidth = 8;
-      ctx.stroke();
-      ctx.fillStyle = '#09090b';
-      ctx.font = '900 96px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(suit === 'gohan' ? '魔' : '悟', w * 0.5, h * 0.39);
-      ctx.fillStyle = spec.accent;
-      ctx.fillRect(0, h * 0.78, w, h * 0.18);
-    } else if (suit === 'vegeta') {
-      // Clean white/blue Saiyan armored back plate (-Z)
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(w * 0.1, h * 0.12, w * 0.8, h * 0.7);
-      ctx.fillStyle = '#eab308';
-      ctx.fillRect(w * 0.14, 0, w * 0.14, h * 0.18);
-      ctx.fillRect(w * 0.72, 0, w * 0.14, h * 0.18);
-    } else if (suit === 'trunks') {
-      // Clean Capsule Corp blue jacket back + Capsule Corp round crest (-Z)
-      ctx.fillStyle = '#f8fafc';
-      ctx.beginPath();
-      ctx.arc(w * 0.5, h * 0.38, 58, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#09090b';
-      ctx.font = '900 40px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('CAPSULE', w * 0.5, h * 0.38);
-      ctx.fillStyle = '#78350f';
-      ctx.fillRect(0, h * 0.82, w, h * 0.18);
-    } else if (suit === 'beerus') {
-      // Clean purple back with subtle Egyptian collar rim & blue waist belt (-Z)
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, 0, w, h * 0.14);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(0, h * 0.13, w, h * 0.04);
-      ctx.fillStyle = '#1d4ed8';
-      ctx.fillRect(0, h * 0.78, w, h * 0.22);
-    } else if (suit === 'whis') {
-      // Clean maroon Angel robe back with vertical pleat & waist sash ONLY (NO chest emblem on back)
-      ctx.fillStyle = 'rgba(0,0,0,0.24)';
-      ctx.fillRect(w * 0.485, h * 0.08, w * 0.03, h * 0.66);
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(0, h * 0.74, w, h * 0.16);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(0, h * 0.8, w, h * 0.05);
-    } else if (suit === 'zeno') {
-      // Clean plain royal blue robe back with pink shoulder trim & yellow belt (NO kanji badge on back)
-      ctx.fillStyle = '#db2777';
-      ctx.fillRect(0, 0, w, h * 0.16);
-      ctx.fillStyle = '#facc15';
-      ctx.fillRect(0, h * 0.76, w, h * 0.18);
-    } else if (suit === 'gon') {
-      // Clean green jacket back with orange collar hem (no front zipper/V)
-      ctx.fillStyle = '#f97316';
-      ctx.fillRect(0, 0, w, h * 0.12);
-      ctx.fillRect(0, h * 0.86, w, h * 0.14);
-    } else if (suit === 'killua') {
-      // Clean navy back with white hem
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(0, h * 0.84, w, h * 0.16);
-    } else if (suit === 'kurapika') {
-      // Solid Kurta blue back tabard with orange bottom border
-      ctx.fillStyle = '#f97316';
-      ctx.fillRect(0, 0, w, h * 0.08);
-      ctx.fillRect(0, h * 0.78, w, h * 0.16);
-    } else if (suit === 'leorio') {
-      // Tailored navy suit back seam
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      ctx.fillRect(w * 0.485, h * 0.1, w * 0.03, h * 0.88);
-    } else if (suit === 'hisoka') {
-      // Magician back panel with large crimson diamond & coattail seam
-      ctx.fillStyle = '#be185d';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.5, h * 0.22);
-      ctx.lineTo(w * 0.68, h * 0.48);
-      ctx.lineTo(w * 0.5, h * 0.74);
-      ctx.lineTo(w * 0.32, h * 0.48);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#facc15';
-      ctx.fillRect(0, h * 0.78, w, h * 0.22);
-    } else {
-      // Clean center back seam for all other costumes
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      ctx.fillRect(w * 0.488, h * 0.08, w * 0.024, h * 0.82);
-    }
-  });
+
+      // Optional Back Kanji / Crest Emblem (Marine, Justice, Garp, Whitebeard, etc.)
+      if (spec.backLogoText) {
+        ctx.fillStyle = spec.accent;
+        ctx.font = '900 42px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(spec.backLogoText, w * 0.5, h * 0.44);
+      }
+    },
+    256,
+    256,
+  );
 }
 
 function getKokoEmbroideryTexture(baseHex: string): THREE.CanvasTexture {
@@ -827,6 +2196,9 @@ const VALID_OUTFITS: ReadonlySet<OutfitType> = new Set([
   'windbreaker',
   'casual',
   'flannel',
+  'tactical_vest',
+  'tunic',
+  'outdoor_vest',
   'formal',
   'poncho',
   'koko',
@@ -844,12 +2216,14 @@ const VALID_HEAD_ACC: ReadonlySet<HeadAccessoryType> = new Set([
   'towel_headband',
   'headlamp',
   'bando',
+  'hairpin',
   'peci',
   'blangkon',
 ]);
 
 const VALID_HAIR: ReadonlySet<HairStyle> = new Set([
   'short',
+  'mohawk',
   'side_part',
   'spiky',
   'undercut',
@@ -857,13 +2231,137 @@ const VALID_HAIR: ReadonlySet<HairStyle> = new Set([
   'long_loose',
   'ponytail',
   'twin_braids',
+  'single_braid',
+  'twintails',
   'hijab',
+  'hijab_sport',
   'parted',
   'long_tie',
   'bob',
   'covered',
   'bald',
 ]);
+
+const VALID_BACK_GEAR: ReadonlySet<BackGearType> = new Set([
+  'none',
+  'carrier',
+  'sling',
+  'cape',
+  'wings',
+  'jetpack',
+]);
+
+const VALID_FACE_EXP: ReadonlySet<FaceExpressionType> = new Set([
+  'auto',
+  'smile',
+  'laugh',
+  'angry',
+  'annoyed',
+  'sad',
+  'shocked',
+  'cool',
+  'sleepy',
+  'shy',
+  'ninja_mask',
+  'elder_wise',
+  'otaku_glasses',
+  'chibi',
+]);
+
+const VALID_FACE_AGE: ReadonlySet<FaceAgeType> = new Set(['young', 'elder']);
+
+const VALID_EYE_STYLE: ReadonlySet<EyeStyleType> = new Set([
+  'auto',
+  'normal',
+  'sharingan',
+  'mangekyou',
+  'rinnegan',
+  'byakugan',
+  'sage',
+  'kyuubi',
+  'imu',
+  'nika',
+  'mihawk',
+  'six_eyes',
+  'sukuna',
+  'ssj',
+  'ui',
+  'upper_moon',
+  'geass',
+]);
+
+const VALID_NECK_ACC: ReadonlySet<NeckAccessoryType> = new Set(['none', 'scarf', 'knit_scarf']);
+const VALID_WRIST_ACC: ReadonlySet<WristAccessoryType> = new Set(['none', 'watch']);
+
+export const MALE_ONLY_OUTFITS: ReadonlySet<OutfitType> = new Set([
+  'tactical_vest',
+  'koko',
+  'formal',
+  'flannel',
+  'casual',
+]);
+
+export const FEMALE_ONLY_OUTFITS: ReadonlySet<OutfitType> = new Set([
+  'tunic',
+  'outdoor_vest',
+  'kebaya',
+]);
+
+export const MALE_ONLY_HAIR: ReadonlySet<HairStyle> = new Set([
+  'short',
+  'mohawk',
+  'side_part',
+  'spiky',
+  'undercut',
+  'curly',
+  'parted',
+  'bald',
+]);
+
+export const FEMALE_ONLY_HAIR: ReadonlySet<HairStyle> = new Set([
+  'hijab',
+  'hijab_sport',
+  'long_loose',
+  'twin_braids',
+  'single_braid',
+  'ponytail',
+  'twintails',
+  'bob',
+  'long_tie',
+  'covered',
+]);
+
+export const MALE_ONLY_HEAD_ACC: ReadonlySet<HeadAccessoryType> = new Set([
+  'peci',
+  'blangkon',
+  'towel_headband',
+]);
+
+export const FEMALE_ONLY_HEAD_ACC: ReadonlySet<HeadAccessoryType> = new Set([
+  'bando',
+  'hairpin',
+]);
+
+export function sanitizeAvatarForGender(cfg: AvatarConfig, gender: GenderType): AvatarConfig {
+  const next: AvatarConfig = { ...cfg, gender };
+  if (gender === 'male') {
+    if (FEMALE_ONLY_OUTFITS.has(next.outfit)) next.outfit = 'windbreaker';
+    if (next.pantsStyle === 'skirt') next.pantsStyle = 'cargo';
+    if (FEMALE_ONLY_HAIR.has(next.hairStyle)) next.hairStyle = 'short';
+    if (FEMALE_ONLY_HEAD_ACC.has(next.headAccessory)) next.headAccessory = 'none';
+    if (next.backGear === 'sling') next.backGear = 'carrier';
+    if (next.neckAccessory === 'knit_scarf') next.neckAccessory = 'none';
+  } else {
+    if (MALE_ONLY_OUTFITS.has(next.outfit)) next.outfit = 'tunic';
+    if (next.pantsStyle === 'shorts') next.pantsStyle = 'cargo';
+    if (MALE_ONLY_HAIR.has(next.hairStyle)) next.hairStyle = 'hijab';
+    if (MALE_ONLY_HEAD_ACC.has(next.headAccessory)) next.headAccessory = 'none';
+    if (next.wristAccessory === 'watch') next.wristAccessory = 'none';
+    if (next.neckAccessory === 'scarf') next.neckAccessory = 'knit_scarf';
+  }
+  next.hat = next.headAccessory;
+  return next;
+}
 
 export function normalizeAvatarConfig(
   raw: Partial<AvatarConfig> | undefined,
@@ -888,8 +2386,25 @@ export function normalizeAvatarConfig(
     raw?.pantsStyle && VALID_PANTS.has(raw.pantsStyle) ? raw.pantsStyle : base.pantsStyle;
   const hairStyle: HairStyle =
     raw?.hairStyle && VALID_HAIR.has(raw.hairStyle) ? raw.hairStyle : base.hairStyle;
+  const backGear: BackGearType =
+    raw?.backGear && VALID_BACK_GEAR.has(raw.backGear) ? raw.backGear : base.backGear;
+  const faceExpression: FaceExpressionType =
+    raw?.faceExpression && VALID_FACE_EXP.has(raw.faceExpression) ? raw.faceExpression : 'auto';
+  const faceAge: FaceAgeType =
+    raw?.faceAge && VALID_FACE_AGE.has(raw.faceAge) ? raw.faceAge : 'young';
+  const eyeStyle: EyeStyleType =
+    raw?.eyeStyle && VALID_EYE_STYLE.has(raw.eyeStyle) ? raw.eyeStyle : 'auto';
+  const neckAccessory: NeckAccessoryType =
+    raw?.neckAccessory && VALID_NECK_ACC.has(raw.neckAccessory) ? raw.neckAccessory : 'none';
+  const wristAccessory: WristAccessoryType =
+    raw?.wristAccessory && VALID_WRIST_ACC.has(raw.wristAccessory) ? raw.wristAccessory : 'none';
 
-  return {
+  const canon = canonicalizeCharacterAndForm(
+    (raw?.superheroSuit || 'none') as CharacterCostumeId,
+    raw?.characterForm,
+  );
+
+  const normalized: AvatarConfig = {
     gender,
     outfit,
     pantsStyle,
@@ -901,528 +2416,19 @@ export function normalizeAvatarConfig(
     headAccessory: mappedHead,
     hat: mappedHead,
     glasses: typeof raw?.glasses === 'boolean' ? raw.glasses : base.glasses,
-    backGear: raw?.backGear || base.backGear,
+    backGear,
     pack: raw?.pack || base.pack,
-    superheroSuit: (raw?.superheroSuit || 'none') as CharacterCostumeId,
+    superheroSuit: canon.suit,
+    characterForm: canon.formId,
+    faceExpression,
+    faceAge,
+    eyeStyle,
+    neckAccessory,
+    wristAccessory,
   };
+
+  return sanitizeAvatarForGender(normalized, gender);
 }
-
-interface CostumeStyleSpec {
-  torso: string;
-  accent: string;
-  armUpper: string;
-  armLower: string;
-  hand: string;
-  legUpper: string;
-  legLower: string;
-  boot: string;
-  skin?: string;
-  hairColor?: string;
-  hairEmissive?: string;
-  hairMode?:
-    | 'none'
-    | 'spiky'
-    | 'gon_spiky'
-    | 'long'
-    | 'bob'
-    | 'bald'
-    | 'ponytail'
-    | 'slick'
-    | 'twin_tails'
-    | 'parted'
-    | 'curly'
-    | 'whis_tall';
-  capeColor?: string;
-  haloColor?: string;
-  neckHaloColor?: string;
-  tailColor?: string;
-  headOval?: boolean;
-  egyptCollar?: boolean;
-  auraColor?: string;
-  fullMask?:
-    | 'ironman'
-    | 'spiderman'
-    | 'batman'
-    | 'ultraman'
-    | 'kamen_rider'
-    | 'flash'
-    | 'k_cyber'
-    | 'kakashi'
-    | 'aizen_eyepatch'
-    | 'obito_mask'
-    | 'grimmjow_jaw';
-  scaleMult?: number;
-  metalness?: number;
-  roughness?: number;
-  weapon?:
-    | 'shield'
-    | 'mjolnir'
-    | 'trident'
-    | 'spear'
-    | 'katana_3'
-    | 'sword'
-    | 'yoru'
-    | 'kanabo'
-    | 'staff'
-    | 'whis_staff'
-    | 'lightning_bolt'
-    | 'fire_orb'
-    | 'rasengan'
-    | 'clima_tact'
-    | 'sode_shirayuki'
-    | 'ryujin_jakka'
-    | 'gunbai'
-    | 'kurta_chains'
-    | 'playing_card';
-  headGear?:
-    | 'straw_hat'
-    | 'straw_hat_white'
-    | 'trafalgar_hat'
-    | 'horns'
-    | 'broken_horn'
-    | 'crown_gold'
-    | 'mahkota_wayang'
-    | 'leaf_band'
-    | 'oil_band'
-    | 'akatsuki_hat'
-    | 'yhwach_helm'
-    | 'ice_crown'
-    | 'wing_helm'
-    | 'ace_hat'
-    | 'mihawk_hat'
-    | 'aokiji_glasses'
-    | 'kenseikan'
-    | 'visor'
-    | 'piccolo_turban'
-    | 'leorio_glasses'
-    | 'beerus_ears'
-    | 'zeno_ears';
-  coat?: 'akatsuki' | 'marine' | 'hokage' | 'captain_white' | 'sleeveless_captain' | 'espada' | 'yhwach_cloak' | 'gundala_scarf' | 'feather_cape' | 'tsunade_haori' | 'jiraiya_haori' | 'whis_robe';
-  backProp?: 'trunks_sword' | 'killua_skateboard';
-  divisionNo?: string;
-  luffyCord?: boolean;
-  hisokaMarks?: boolean;
-  missingLeftArm?: boolean;
-  prayerBeads?: boolean;
-  byakugouSeal?: boolean;
-  whiteBeard?: boolean;
-  ulquiorraTears?: boolean;
-  snakeEarrings?: boolean;
-}
-
-const COSTUME_SPECS: Partial<Record<CharacterCostumeId, CostumeStyleSpec>> = {
-  // 1. Universal Superheroes (Marvel & DC)
-  ironman: {
-    torso: '#991b1b', accent: '#fbbf24', armUpper: '#991b1b', armLower: '#fbbf24',
-    hand: '#991b1b', legUpper: '#991b1b', legLower: '#fbbf24', boot: '#991b1b',
-    fullMask: 'ironman', metalness: 0.86, roughness: 0.22, auraColor: '#22d3ee',
-  },
-  spiderman: {
-    torso: '#dc2626', accent: '#1d4ed8', armUpper: '#dc2626', armLower: '#1d4ed8',
-    hand: '#dc2626', legUpper: '#1d4ed8', legLower: '#dc2626', boot: '#dc2626',
-    fullMask: 'spiderman', metalness: 0.14, roughness: 0.42,
-  },
-  captain_america: {
-    torso: '#1d4ed8', accent: '#dc2626', armUpper: '#1d4ed8', armLower: '#f8fafc',
-    hand: '#991b1b', legUpper: '#1e3a8a', legLower: '#1e3a8a', boot: '#7c2d12',
-    weapon: 'shield', headGear: 'wing_helm', metalness: 0.28,
-  },
-  thor: {
-    torso: '#1e293b', accent: '#cbd5e1', armUpper: '#334155', armLower: '#94a3b8',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#1e293b', boot: '#451a03',
-    capeColor: '#dc2626', hairColor: '#facc15', hairMode: 'long', weapon: 'mjolnir',
-    headGear: 'wing_helm', auraColor: '#38bdf8', metalness: 0.65,
-  },
-  hulk: {
-    torso: '#16a34a', accent: '#7e22ce', armUpper: '#16a34a', armLower: '#15803d',
-    hand: '#16a34a', legUpper: '#6b21a8', legLower: '#16a34a', boot: '#15803d',
-    skin: '#22c55e', hairColor: '#09090b', hairMode: 'spiky', scaleMult: 1.22,
-  },
-  superman: {
-    torso: '#1d4ed8', accent: '#dc2626', armUpper: '#1d4ed8', armLower: '#1d4ed8',
-    hand: '#f1c27d', legUpper: '#1d4ed8', legLower: '#1d4ed8', boot: '#dc2626',
-    capeColor: '#dc2626', hairColor: '#0f172a', hairMode: 'slick',
-  },
-  batman: {
-    torso: '#1e293b', accent: '#facc15', armUpper: '#1e293b', armLower: '#0f172a',
-    hand: '#0f172a', legUpper: '#1e293b', legLower: '#0f172a', boot: '#09090b',
-    capeColor: '#0f172a', fullMask: 'batman', metalness: 0.35,
-  },
-  wonder_woman: {
-    torso: '#b91c1c', accent: '#fbbf24', armUpper: '#f1c27d', armLower: '#cbd5e1',
-    hand: '#f1c27d', legUpper: '#1d4ed8', legLower: '#f1c27d', boot: '#dc2626',
-    hairColor: '#09090b', hairMode: 'long', headGear: 'crown_gold', weapon: 'shield',
-  },
-  flash: {
-    torso: '#dc2626', accent: '#facc15', armUpper: '#dc2626', armLower: '#dc2626',
-    hand: '#dc2626', legUpper: '#dc2626', legLower: '#dc2626', boot: '#facc15',
-    fullMask: 'flash', auraColor: '#facc15',
-  },
-
-  // 2. Asian & Indonesian Superheroes
-  k_cyber: {
-    torso: '#0f172a', accent: '#22d3ee', armUpper: '#1e293b', armLower: '#06b6d4',
-    hand: '#0f172a', legUpper: '#0f172a', legLower: '#1e293b', boot: '#06b6d4',
-    fullMask: 'k_cyber', auraColor: '#22d3ee', metalness: 0.78,
-  },
-  taekwondo_hero: {
-    torso: '#f8fafc', accent: '#0f172a', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f1c27d', legUpper: '#f8fafc', legLower: '#f8fafc', boot: '#0f172a',
-    hairColor: '#1c1917', hairMode: 'spiky', headGear: 'leaf_band',
-  },
-  ultraman: {
-    torso: '#e2e8f0', accent: '#dc2626', armUpper: '#dc2626', armLower: '#e2e8f0',
-    hand: '#e2e8f0', legUpper: '#dc2626', legLower: '#e2e8f0', boot: '#dc2626',
-    fullMask: 'ultraman', metalness: 0.55, auraColor: '#38bdf8',
-  },
-  kamen_rider: {
-    torso: '#059669', accent: '#dc2626', armUpper: '#0f172a', armLower: '#059669',
-    hand: '#0f172a', legUpper: '#0f172a', legLower: '#059669', boot: '#1e293b',
-    fullMask: 'kamen_rider', capeColor: '#dc2626', metalness: 0.65,
-  },
-  shinobi: {
-    torso: '#0f172a', accent: '#475569', armUpper: '#0f172a', armLower: '#1e293b',
-    hand: '#09090b', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    coat: 'gundala_scarf', fullMask: 'kakashi', hairMode: 'spiky', weapon: 'katana_3',
-  },
-  gatotkaca: {
-    torso: '#111827', accent: '#f59e0b', armUpper: '#111827', armLower: '#f59e0b',
-    hand: '#f1c27d', legUpper: '#111827', legLower: '#111827', boot: '#d97706',
-    capeColor: '#78350f', headGear: 'mahkota_wayang', metalness: 0.62,
-  },
-  gundala: {
-    torso: '#991b1b', accent: '#facc15', armUpper: '#0f172a', armLower: '#991b1b',
-    hand: '#0f172a', legUpper: '#0f172a', legLower: '#0f172a', boot: '#991b1b',
-    headGear: 'wing_helm', coat: 'gundala_scarf', auraColor: '#38bdf8',
-  },
-  sri_asih: {
-    torso: '#b91c1c', accent: '#fbbf24', armUpper: '#f1c27d', armLower: '#fbbf24',
-    hand: '#f1c27d', legUpper: '#7f1d1d', legLower: '#f1c27d', boot: '#fbbf24',
-    hairColor: '#1c1917', hairMode: 'long', headGear: 'mahkota_wayang', coat: 'gundala_scarf',
-  },
-
-  // 3. Mythology Gods (Greek, Hindu, Nusantara)
-  zeus: {
-    torso: '#f8fafc', accent: '#fbbf24', armUpper: '#f1c27d', armLower: '#fbbf24',
-    hand: '#f1c27d', legUpper: '#f8fafc', legLower: '#e2e8f0', boot: '#b45309',
-    hairColor: '#f8fafc', hairMode: 'spiky', capeColor: '#f8fafc', headGear: 'crown_gold',
-    weapon: 'lightning_bolt', auraColor: '#fde047',
-  },
-  prometheus: {
-    torso: '#7c2d12', accent: '#fb923c', armUpper: '#f1c27d', armLower: '#f97316',
-    hand: '#fb923c', legUpper: '#431407', legLower: '#7c2d12', boot: '#b45309',
-    hairColor: '#ea580c', hairMode: 'spiky', weapon: 'fire_orb', auraColor: '#f97316',
-  },
-  poseidon: {
-    torso: '#0e7490', accent: '#fbbf24', armUpper: '#f1c27d', armLower: '#0891b2',
-    hand: '#f1c27d', legUpper: '#0f766e', legLower: '#155e75', boot: '#b45309',
-    hairColor: '#cbd5e1', hairMode: 'long', headGear: 'crown_gold', weapon: 'trident', auraColor: '#22d3ee',
-  },
-  athena: {
-    torso: '#f8fafc', accent: '#f59e0b', armUpper: '#f1c27d', armLower: '#fbbf24',
-    hand: '#f1c27d', legUpper: '#f8fafc', legLower: '#f1c27d', boot: '#d97706',
-    hairColor: '#451a03', hairMode: 'long', headGear: 'crown_gold', weapon: 'spear', capeColor: '#f8fafc',
-  },
-  krishna: {
-    torso: '#facc15', accent: '#0284c7', armUpper: '#38bdf8', armLower: '#38bdf8',
-    hand: '#38bdf8', legUpper: '#facc15', legLower: '#eab308', boot: '#d97706',
-    skin: '#38bdf8', hairColor: '#0f172a', hairMode: 'slick', headGear: 'crown_gold', auraColor: '#fde047',
-  },
-  siwa: {
-    torso: '#f1f5f9', accent: '#f97316', armUpper: '#cbd5e1', armLower: '#cbd5e1',
-    hand: '#cbd5e1', legUpper: '#ea580c', legLower: '#cbd5e1', boot: '#78350f',
-    skin: '#e2e8f0', hairColor: '#0f172a', hairMode: 'ponytail', weapon: 'trident', auraColor: '#67e8f9',
-  },
-  wisnu: {
-    torso: '#1d4ed8', accent: '#fbbf24', armUpper: '#1d4ed8', armLower: '#fbbf24',
-    hand: '#60a5fa', legUpper: '#facc15', legLower: '#d97706', boot: '#fbbf24',
-    skin: '#60a5fa', hairColor: '#0f172a', hairMode: 'slick', headGear: 'mahkota_wayang', auraColor: '#fbbf24',
-  },
-  hanoman: {
-    torso: '#f8fafc', accent: '#dc2626', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f8fafc', legUpper: '#dc2626', legLower: '#f8fafc', boot: '#b45309',
-    skin: '#f8fafc', hairColor: '#f8fafc', hairMode: 'spiky', headGear: 'crown_gold', weapon: 'staff',
-  },
-
-  // 4. Anime: One Piece (13)
-  luffy: {
-    torso: '#dc2626', accent: '#facc15', armUpper: '#dc2626', armLower: '#f1c27d',
-    hand: '#f1c27d', legUpper: '#1d4ed8', legLower: '#f1c27d', boot: '#b45309',
-    hairColor: '#09090b', hairMode: 'spiky', headGear: 'straw_hat', luffyCord: true,
-  },
-  luffy_gear5: {
-    torso: '#f8fafc', accent: '#a855f7', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f8fafc', legUpper: '#f8fafc', legLower: '#f8fafc', boot: '#f8fafc',
-    skin: '#f8fafc', hairColor: '#ffffff', hairMode: 'spiky', haloColor: '#ffffff', auraColor: '#e9d5ff',
-  },
-  boa_hancock: {
-    torso: '#be123c', accent: '#fbbf24', armUpper: '#be123c', armLower: '#f1c27d',
-    hand: '#f1c27d', legUpper: '#9f1239', legLower: '#f1c27d', boot: '#be123c',
-    hairColor: '#09090b', hairMode: 'long', capeColor: '#f8fafc', snakeEarrings: true, auraColor: '#f472b6',
-  },
-  zoro: {
-    torso: '#15803d', accent: '#dc2626', armUpper: '#166534', armLower: '#15803d',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#22c55e', hairMode: 'spiky', weapon: 'katana_3',
-  },
-  kaido: {
-    torso: '#d97706', accent: '#7e22ce', armUpper: '#c2410c', armLower: '#9a3412',
-    hand: '#f1c27d', legUpper: '#1e1b4b', legLower: '#1e1b4b', boot: '#09090b',
-    hairColor: '#0f172a', hairMode: 'long', headGear: 'horns', coat: 'feather_cape', weapon: 'kanabo',
-    scaleMult: 1.24, auraColor: '#a855f7',
-  },
-  aokiji: {
-    torso: '#f8fafc', accent: '#0284c7', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f1c27d', legUpper: '#1e293b', legLower: '#1e293b', boot: '#0f172a',
-    hairColor: '#0f172a', hairMode: 'spiky', headGear: 'aokiji_glasses', coat: 'marine', auraColor: '#67e8f9',
-  },
-  shanks: {
-    torso: '#f8fafc', accent: '#dc2626', armUpper: '#f8fafc', armLower: '#f1c27d',
-    hand: '#f1c27d', legUpper: '#451a03', legLower: '#451a03', boot: '#1e293b',
-    hairColor: '#b91c1c', hairMode: 'parted', capeColor: '#09090b', weapon: 'sword', missingLeftArm: true, auraColor: '#ef4444',
-  },
-  mihawk: {
-    torso: '#7f1d1d', accent: '#fbbf24', armUpper: '#7f1d1d', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#1e293b',
-    hairColor: '#09090b', hairMode: 'slick', headGear: 'mihawk_hat', weapon: 'yoru',
-  },
-  sanji: {
-    torso: '#0f172a', accent: '#eab308', armUpper: '#0f172a', armLower: '#0f172a',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#facc15', hairMode: 'slick', auraColor: '#fb923c',
-  },
-  ace: {
-    torso: '#f1c27d', accent: '#f97316', armUpper: '#f1c27d', armLower: '#f1c27d',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#1e293b',
-    hairColor: '#09090b', hairMode: 'spiky', headGear: 'ace_hat', prayerBeads: true, weapon: 'fire_orb', auraColor: '#f97316',
-  },
-  law: {
-    torso: '#facc15', accent: '#0f172a', armUpper: '#0f172a', armLower: '#facc15',
-    hand: '#f1c27d', legUpper: '#1e3a8a', legLower: '#1e3a8a', boot: '#09090b',
-    hairColor: '#0f172a', hairMode: 'spiky', headGear: 'trafalgar_hat', weapon: 'sword',
-  },
-  nami: {
-    torso: '#0ea5e9', accent: '#fbbf24', armUpper: '#f1c27d', armLower: '#f1c27d',
-    hand: '#f1c27d', legUpper: '#1d4ed8', legLower: '#f1c27d', boot: '#92400e',
-    hairColor: '#f97316', hairMode: 'long', weapon: 'clima_tact', auraColor: '#38bdf8',
-  },
-  nico_robin: {
-    torso: '#4c1d95', accent: '#f472b6', armUpper: '#4c1d95', armLower: '#f1c27d',
-    hand: '#f1c27d', legUpper: '#1e1b4b', legLower: '#f1c27d', boot: '#312e81',
-    hairColor: '#0f172a', hairMode: 'parted', headGear: 'aokiji_glasses', auraColor: '#f472b6',
-  },
-
-  // 5. Anime: Naruto & Boruto (14)
-  naruto: {
-    torso: '#f97316', accent: '#0f172a', armUpper: '#f97316', armLower: '#0f172a',
-    hand: '#f1c27d', legUpper: '#f97316', legLower: '#f97316', boot: '#1e293b',
-    hairColor: '#facc15', hairMode: 'spiky', headGear: 'leaf_band', weapon: 'rasengan', auraColor: '#38bdf8',
-  },
-  sasuke: {
-    torso: '#e2e8f0', accent: '#7e22ce', armUpper: '#e2e8f0', armLower: '#1e293b',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#0f172a', hairMode: 'spiky', weapon: 'sword', auraColor: '#a855f7',
-  },
-  kakashi: {
-    torso: '#15803d', accent: '#1e293b', armUpper: '#1e293b', armLower: '#1e293b',
-    hand: '#1e293b', legUpper: '#1e293b', legLower: '#1e293b', boot: '#0f172a',
-    hairColor: '#cbd5e1', hairMode: 'spiky', fullMask: 'kakashi', headGear: 'leaf_band',
-  },
-  sakura: {
-    torso: '#dc2626', accent: '#f8fafc', armUpper: '#dc2626', armLower: '#f1c27d',
-    hand: '#1e293b', legUpper: '#be123c', legLower: '#f1c27d', boot: '#0f172a',
-    hairColor: '#f472b6', hairMode: 'bob', headGear: 'leaf_band', byakugouSeal: true,
-  },
-  hashirama: {
-    torso: '#991b1b', accent: '#fbbf24', armUpper: '#991b1b', armLower: '#0f172a',
-    hand: '#f1c27d', legUpper: '#1e293b', legLower: '#1e293b', boot: '#09090b',
-    hairColor: '#09090b', hairMode: 'long', headGear: 'leaf_band', auraColor: '#22c55e',
-  },
-  tobirama: {
-    torso: '#1d4ed8', accent: '#f8fafc', armUpper: '#1d4ed8', armLower: '#0f172a',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#e2e8f0', hairMode: 'spiky', headGear: 'leaf_band', auraColor: '#38bdf8',
-  },
-  hiruzen: {
-    torso: '#1e293b', accent: '#b91c1c', armUpper: '#1e293b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#cbd5e1', hairMode: 'short' as 'slick', coat: 'hokage', weapon: 'staff',
-  },
-  minato: {
-    torso: '#15803d', accent: '#f8fafc', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f1c27d', legUpper: '#1e293b', legLower: '#1e293b', boot: '#0f172a',
-    hairColor: '#facc15', hairMode: 'spiky', headGear: 'leaf_band', coat: 'hokage', auraColor: '#facc15',
-  },
-  tsunade: {
-    torso: '#15803d', accent: '#94a3b8', armUpper: '#15803d', armLower: '#f1c27d',
-    hand: '#f1c27d', legUpper: '#1e293b', legLower: '#f1c27d', boot: '#09090b',
-    hairColor: '#fde047', hairMode: 'twin_tails', coat: 'tsunade_haori', byakugouSeal: true, auraColor: '#4ade80',
-  },
-  jiraiya: {
-    torso: '#b91c1c', accent: '#fbbf24', armUpper: '#b91c1c', armLower: '#1e293b',
-    hand: '#f1c27d', legUpper: '#1e293b', legLower: '#1e293b', boot: '#78350f',
-    hairColor: '#f8fafc', hairMode: 'spiky', headGear: 'oil_band', coat: 'jiraiya_haori', weapon: 'rasengan',
-  },
-  boruto: {
-    torso: '#0f172a', accent: '#ec4899', armUpper: '#0f172a', armLower: '#ec4899',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#facc15', hairMode: 'spiky', headGear: 'leaf_band',
-  },
-  itachi: {
-    torso: '#09090b', accent: '#dc2626', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#09090b', hairMode: 'ponytail', coat: 'akatsuki', auraColor: '#ef4444',
-  },
-  obito: {
-    torso: '#09090b', accent: '#f97316', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#1e293b', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#09090b', hairMode: 'spiky', fullMask: 'obito_mask', coat: 'akatsuki', weapon: 'gunbai', auraColor: '#f97316',
-  },
-  madara: {
-    torso: '#7f1d1d', accent: '#0f172a', armUpper: '#7f1d1d', armLower: '#450a0a',
-    hand: '#1e293b', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#09090b', hairMode: 'long', weapon: 'gunbai', auraColor: '#dc2626',
-  },
-
-  // 6. Anime: Bleach TYBW (12)
-  ichigo: {
-    torso: '#09090b', accent: '#f8fafc', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#f97316', hairMode: 'spiky', weapon: 'sword', auraColor: '#38bdf8',
-  },
-  gin: {
-    torso: '#09090b', accent: '#cbd5e1', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#f8fafc',
-    hairColor: '#cbd5e1', hairMode: 'bob', coat: 'sleeveless_captain', divisionNo: '三', weapon: 'sword',
-  },
-  aizen: {
-    torso: '#0f172a', accent: '#9333ea', armUpper: '#0f172a', armLower: '#0f172a',
-    hand: '#f1c27d', legUpper: '#0f172a', legLower: '#0f172a', boot: '#09090b',
-    hairColor: '#451a03', hairMode: 'slick', fullMask: 'aizen_eyepatch', auraColor: '#a855f7',
-  },
-  ichibe: {
-    torso: '#09090b', accent: '#dc2626', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#f8fafc',
-    hairColor: '#09090b', hairMode: 'bald', coat: 'captain_white', divisionNo: '零', prayerBeads: true, weapon: 'kanabo', scaleMult: 1.16,
-  },
-  yhwach: {
-    torso: '#09090b', accent: '#dc2626', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#09090b', hairMode: 'long', coat: 'yhwach_cloak', weapon: 'sword', auraColor: '#38bdf8', scaleMult: 1.12,
-  },
-  ulquiorra: {
-    torso: '#f8fafc', accent: '#10b981', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f8fafc', legUpper: '#f8fafc', legLower: '#f8fafc', boot: '#09090b',
-    skin: '#f1f5f9', hairColor: '#09090b', hairMode: 'spiky', headGear: 'broken_horn', coat: 'espada', ulquiorraTears: true, auraColor: '#10b981',
-  },
-  grimmjow: {
-    torso: '#f8fafc', accent: '#38bdf8', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f1c27d', legUpper: '#f8fafc', legLower: '#f8fafc', boot: '#09090b',
-    hairColor: '#38bdf8', hairMode: 'spiky', fullMask: 'grimmjow_jaw', coat: 'espada', weapon: 'sword', auraColor: '#38bdf8',
-  },
-  kenpachi: {
-    torso: '#09090b', accent: '#f8fafc', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#09090b', hairMode: 'spiky', coat: 'sleeveless_captain', divisionNo: '十一', weapon: 'sword', auraColor: '#facc15',
-  },
-  toshiro: {
-    torso: '#09090b', accent: '#22d3ee', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#f8fafc', hairMode: 'spiky', coat: 'captain_white', divisionNo: '十', headGear: 'ice_crown', weapon: 'sword', auraColor: '#67e8f9',
-  },
-  byakuya: {
-    torso: '#09090b', accent: '#f8fafc', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#0f172a', hairMode: 'long', headGear: 'kenseikan', coat: 'captain_white', divisionNo: '六', weapon: 'sword', auraColor: '#f472b6',
-  },
-  rukia: {
-    torso: '#09090b', accent: '#e0f2fe', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#0f172a', hairMode: 'bob', weapon: 'sode_shirayuki', auraColor: '#7dd3fc',
-  },
-  yamamoto: {
-    torso: '#09090b', accent: '#f97316', armUpper: '#09090b', armLower: '#09090b',
-    hand: '#f1c27d', legUpper: '#09090b', legLower: '#09090b', boot: '#09090b',
-    hairColor: '#f8fafc', hairMode: 'bald', coat: 'captain_white', divisionNo: '一', whiteBeard: true, weapon: 'ryujin_jakka', auraColor: '#f97316', scaleMult: 1.1,
-  },
-
-  // 7. Anime: Dragon Ball (9)
-  goku: {
-    torso: '#f97316', accent: '#1d4ed8', armUpper: '#f97316', armLower: '#1d4ed8',
-    hand: '#f1c27d', legUpper: '#f97316', legLower: '#f97316', boot: '#1d4ed8',
-    hairColor: '#09090b', hairMode: 'spiky',
-  },
-  goku_ssj: {
-    torso: '#f97316', accent: '#1d4ed8', armUpper: '#f97316', armLower: '#1d4ed8',
-    hand: '#f1c27d', legUpper: '#f97316', legLower: '#f97316', boot: '#1d4ed8',
-    hairColor: '#fde047', hairEmissive: '#facc15', hairMode: 'spiky', auraColor: '#facc15',
-  },
-  vegeta: {
-    torso: '#1d4ed8', accent: '#f8fafc', armUpper: '#1d4ed8', armLower: '#f8fafc',
-    hand: '#f8fafc', legUpper: '#1d4ed8', legLower: '#1d4ed8', boot: '#f8fafc',
-    hairColor: '#09090b', hairMode: 'spiky',
-  },
-  gohan: {
-    torso: '#6b21a8', accent: '#dc2626', armUpper: '#6b21a8', armLower: '#dc2626',
-    hand: '#f1c27d', legUpper: '#6b21a8', legLower: '#6b21a8', boot: '#78350f',
-    hairColor: '#09090b', hairMode: 'spiky', auraColor: '#e2e8f0',
-  },
-  piccolo: {
-    torso: '#581c87', accent: '#2563eb', armUpper: '#4ade80', armLower: '#4ade80',
-    hand: '#4ade80', legUpper: '#581c87', legLower: '#581c87', boot: '#78350f',
-    skin: '#4ade80', hairColor: '#4ade80', hairMode: 'bald', headGear: 'piccolo_turban', capeColor: '#f8fafc',
-  },
-  trunks: {
-    torso: '#2563eb', accent: '#09090b', armUpper: '#2563eb', armLower: '#2563eb',
-    hand: '#f1c27d', legUpper: '#334155', legLower: '#334155', boot: '#eab308',
-    hairColor: '#c084fc', hairMode: 'parted', backProp: 'trunks_sword',
-  },
-  beerus: {
-    torso: '#a855f7', accent: '#fbbf24', armUpper: '#a855f7', armLower: '#a855f7',
-    hand: '#a855f7', legUpper: '#1d4ed8', legLower: '#1d4ed8', boot: '#1e293b',
-    skin: '#a855f7', hairColor: '#4c1d95', hairMode: 'bald', headGear: 'beerus_ears',
-    egyptCollar: true, tailColor: '#a855f7', auraColor: '#c084fc',
-  },
-  whis: {
-    torso: '#7f1d1d', accent: '#38bdf8', armUpper: '#7f1d1d', armLower: '#7f1d1d',
-    hand: '#93c5fd', legUpper: '#7f1d1d', legLower: '#7f1d1d', boot: '#1e1b4b',
-    skin: '#93c5fd', hairColor: '#f8fafc', hairMode: 'whis_tall',
-    coat: 'whis_robe', neckHaloColor: '#38bdf8', weapon: 'whis_staff', auraColor: '#7dd3fc',
-  },
-  zeno: {
-    torso: '#1d4ed8', accent: '#facc15', armUpper: '#db2777', armLower: '#facc15',
-    hand: '#818cf8', legUpper: '#1e1b4b', legLower: '#db2777', boot: '#facc15',
-    skin: '#818cf8', hairColor: '#09090b', hairMode: 'bald', headGear: 'zeno_ears',
-    scaleMult: 0.72, headOval: true, auraColor: '#fde047',
-  },
-
-  // 8. Anime: Hunter x Hunter (5)
-  gon: {
-    torso: '#16a34a', accent: '#f97316', armUpper: '#16a34a', armLower: '#f1c27d',
-    hand: '#f1c27d', legUpper: '#15803d', legLower: '#f1c27d', boot: '#166534',
-    hairColor: '#064e3b', hairMode: 'gon_spiky',
-  },
-  killua: {
-    torso: '#1e3a8a', accent: '#f8fafc', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f1c27d', legUpper: '#334155', legLower: '#f1c27d', boot: '#4338ca',
-    hairColor: '#e2e8f0', hairMode: 'spiky', backProp: 'killua_skateboard', auraColor: '#38bdf8',
-  },
-  kurapika: {
-    torso: '#1d4ed8', accent: '#f97316', armUpper: '#f8fafc', armLower: '#f8fafc',
-    hand: '#f1c27d', legUpper: '#f8fafc', legLower: '#f8fafc', boot: '#1e293b',
-    hairColor: '#fde047', hairMode: 'bob', weapon: 'kurta_chains',
-  },
-  leorio: {
-    torso: '#1e293b', accent: '#f8fafc', armUpper: '#1e293b', armLower: '#1e293b',
-    hand: '#f1c27d', legUpper: '#1e293b', legLower: '#1e293b', boot: '#09090b',
-    hairColor: '#09090b', hairMode: 'spiky', headGear: 'leorio_glasses',
-  },
-  hisoka: {
-    torso: '#f8fafc', accent: '#be185d', armUpper: '#f8fafc', armLower: '#be185d',
-    hand: '#fde2c4', legUpper: '#1e1b4b', legLower: '#facc15', boot: '#be185d',
-    skin: '#fde2c4', hairColor: '#db2777', hairMode: 'slick', hisokaMarks: true, weapon: 'playing_card', auraColor: '#ec4899',
-  },
-};
 
 export function buildR15AvatarMesh(
   rawCfg: Partial<AvatarConfig> | undefined,
@@ -1432,8 +2438,9 @@ export function buildR15AvatarMesh(
   const cfg = normalizeAvatarConfig(rawCfg, role);
   const castShadow = options.castShadow !== false;
   const suit = cfg.superheroSuit || 'none';
-  const spec = suit !== 'none' ? COSTUME_SPECS[suit] : undefined;
-  const isFemale = cfg.gender === 'female' && !spec;
+  const formId = cfg.characterForm || 'base';
+  const spec = suit !== 'none' ? resolveCharacterSpec(suit, formId) : undefined;
+  const isFemale = Boolean(spec?.isFemale) || (cfg.gender === 'female' && !spec);
 
   const group = new THREE.Group();
   const bodyRig = new THREE.Group();
@@ -1442,27 +2449,34 @@ export function buildR15AvatarMesh(
   }
   group.add(bodyRig);
 
-  const torsoMainColor = spec ? spec.torso : cfg.jacket;
+  const torsoMainColor = spec?.imuSilhouette ? '#050507' : spec ? spec.torso : cfg.jacket;
   const torsoAccentColor = spec ? spec.accent : '#0f172a';
-  const armUpperColor = spec ? spec.armUpper : cfg.jacket;
-  const armLowerColor = spec
-    ? spec.armLower
-    : cfg.outfit === 'casual' || cfg.outfit === 'school'
-      ? cfg.skinColor
-      : cfg.jacket;
-  const handColor = spec ? spec.hand : cfg.skinColor;
-  const legUpperColor = spec ? spec.legUpper : cfg.pantsColor;
-  const legLowerColor =
-    spec ? spec.legLower : cfg.pantsStyle === 'shorts' || cfg.pantsStyle === 'skirt' ? cfg.skinColor : cfg.pantsColor;
-  const bootColor = spec ? spec.boot : '#3b2414';
+  const armUpperColor = spec?.imuSilhouette ? '#050507' : spec ? spec.armUpper : cfg.jacket;
+  const armLowerColor = spec?.imuSilhouette
+    ? '#050507'
+    : spec
+      ? spec.armLower
+      : cfg.outfit === 'casual' || cfg.outfit === 'school' || cfg.outfit === 'tactical_vest'
+        ? cfg.skinColor
+        : cfg.jacket;
+  const handColor = spec?.imuSilhouette ? '#050507' : spec ? spec.hand : cfg.skinColor;
+  const legUpperColor = spec?.imuSilhouette ? '#050507' : spec ? spec.legUpper : cfg.pantsColor;
+  const legLowerColor = spec?.imuSilhouette
+    ? '#050507'
+    : spec
+      ? spec.legLower
+      : cfg.pantsStyle === 'shorts' || cfg.pantsStyle === 'skirt'
+        ? cfg.skinColor
+        : cfg.pantsColor;
+  const bootColor = spec?.imuSilhouette ? '#050507' : spec ? spec.boot : '#3b2414';
   const metalness = spec?.metalness ?? 0.06;
   const roughness = spec?.roughness ?? 0.52;
-  const skinColor = spec?.skin || cfg.skinColor;
-  const hairColor = spec?.hairColor || cfg.hairColor;
+  const skinColor = spec?.imuSilhouette ? '#050507' : spec?.skin || cfg.skinColor;
+  const hairColor = spec?.imuSilhouette ? '#050507' : spec?.hairColor || cfg.hairColor;
 
   let torsoMat: THREE.Material;
-  const costumeFrontTex = spec ? getCostumeChestTexture(suit, spec) : null;
-  const costumeBackTex = spec ? getCostumeBackTexture(suit, spec) : null;
+  const costumeFrontTex = spec ? getCostumeChestTexture(suit, spec, formId) : null;
+  const costumeBackTex = spec ? getCostumeBackTexture(suit, spec, formId) : null;
   const dailyTex = !spec ? getDailyOutfitTexture(cfg.outfit, torsoMainColor) : null;
 
   if (!spec && cfg.outfit === 'poncho') {
@@ -1477,17 +2491,16 @@ export function buildR15AvatarMesh(
   } else if (!spec && cfg.outfit === 'school') {
     torsoMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.58 });
   } else {
-    // Solid neutral base cloth so front chest graphics never duplicate onto the back (-Z)
     torsoMat = new THREE.MeshStandardMaterial({ color: torsoMainColor, roughness, metalness });
   }
 
   const accentMat = new THREE.MeshStandardMaterial({
     color: torsoAccentColor,
     roughness: spec ? 0.28 : 0.65,
-    metalness: suit === 'ironman' || suit === 'gatotkaca' || suit === 'k_cyber' ? 0.82 : 0.14,
+    metalness: suit === 'ironman' || suit === 'gatotkaca' || suit === 'k_cyber' || suit === 'doctor_doom' ? 0.82 : 0.14,
   });
   const armUpperMat =
-    suit === 'spiderman'
+    suit === 'spiderman' && formId !== 'symbiote'
       ? new THREE.MeshStandardMaterial({ map: getSpiderWebTexture(), roughness: 0.42 })
       : !spec && cfg.outfit === 'flannel'
         ? new THREE.MeshStandardMaterial({ map: getFlannelTexture(armUpperColor), roughness: 0.72 })
@@ -1534,13 +2547,14 @@ export function buildR15AvatarMesh(
   pelvisMesh.castShadow = castShadow;
   lowerTorso.add(pelvisMesh);
 
-  // Skirt geometry if pantsStyle === 'skirt' or outfit === 'kebaya'
-  if (!spec && (cfg.pantsStyle === 'skirt' || cfg.outfit === 'kebaya')) {
+  // Skirt geometry if pantsStyle === 'skirt' or outfit === 'kebaya', or flared modest hem for tunic
+  if (!spec && (cfg.pantsStyle === 'skirt' || cfg.outfit === 'kebaya' || cfg.outfit === 'tunic')) {
+    const skirtMat = cfg.outfit === 'tunic' ? torsoMat : legUpperMat;
     const skirtMesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.32, 0.48, 0.44, 16),
-      legUpperMat,
+      new THREE.CylinderGeometry(0.32, cfg.outfit === 'tunic' ? 0.44 : 0.48, cfg.outfit === 'tunic' ? 0.36 : 0.44, 14),
+      skirtMat,
     );
-    skirtMesh.position.y = -0.1;
+    skirtMesh.position.y = cfg.outfit === 'tunic' ? -0.05 : -0.1;
     skirtMesh.castShadow = castShadow;
     lowerTorso.add(skirtMesh);
   }
@@ -1582,21 +2596,66 @@ export function buildR15AvatarMesh(
   buckleInner.position.set(0, 0.16, 0.2);
   lowerTorso.add(buckle, buckleInner);
 
-  // Beerus / Long Back Tail (-Z)
-  if (spec?.tailColor) {
-    const tailMat = new THREE.MeshStandardMaterial({ color: spec.tailColor, roughness: 0.55 });
+  // Tail styles (-Z): Beerus/Cat, Imu Arrow Demon, Nidhogg/Kaido Dragon, Sun Wukong Monkey, Saiyan
+  const tailType = spec?.tailType || (spec?.tailColor ? 'beerus' : 'none');
+  if (tailType !== 'none' || spec?.tailColor) {
+    const tailMat = new THREE.MeshStandardMaterial({
+      color: spec?.tailColor || (tailType === 'arrow_demon' ? '#050507' : tailType === 'dragon_dark' ? '#1e1b4b' : '#78350f'),
+      roughness: 0.55,
+    });
     const tailGroup = new THREE.Group();
     tailGroup.position.set(0, 0.06, -0.18);
-    const seg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.048, 0.42, 8), tailMat);
-    seg1.rotation.x = Math.PI * 0.42;
-    seg1.position.set(0, -0.04, -0.19);
-    const seg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.04, 0.44, 8), tailMat);
-    seg2.rotation.x = Math.PI * 0.22;
-    seg2.position.set(0.04, 0.08, -0.5);
-    const tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.036, 8, 6), tailMat);
-    tailTip.position.set(0.06, 0.25, -0.64);
-    tailGroup.add(seg1, seg2, tailTip);
+    if (tailType === 'arrow_demon') {
+      const seg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 0.46, 7), tailMat);
+      seg1.rotation.x = Math.PI * 0.44;
+      seg1.position.set(0, -0.02, -0.2);
+      const seg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 0.48, 7), tailMat);
+      seg2.rotation.x = Math.PI * 0.2;
+      seg2.position.set(0.06, 0.14, -0.52);
+      const arrowHead = new THREE.Mesh(
+        new THREE.ConeGeometry(0.095, 0.22, 3),
+        new THREE.MeshStandardMaterial({ color: spec?.imuSilhouette ? '#050507' : '#dc2626', roughness: 0.4 }),
+      );
+      arrowHead.rotation.x = Math.PI * 0.16;
+      arrowHead.position.set(0.08, 0.36, -0.64);
+      tailGroup.add(seg1, seg2, arrowHead);
+    } else if (tailType === 'dragon_dark') {
+      const seg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.09, 0.55, 8), tailMat);
+      seg1.rotation.x = Math.PI * 0.46;
+      seg1.position.set(0, -0.05, -0.24);
+      const seg2 = new THREE.Mesh(new THREE.ConeGeometry(0.062, 0.52, 7), tailMat);
+      seg2.rotation.x = -Math.PI * 0.42;
+      seg2.position.set(0, -0.06, -0.68);
+      const spikeMat = new THREE.MeshStandardMaterial({ color: '#94a3b8', roughness: 0.4 });
+      [-0.22, -0.4, -0.58].forEach((sz) => {
+        const sp = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.11, 4), spikeMat);
+        sp.position.set(0, 0.02, sz);
+        tailGroup.add(sp);
+      });
+      tailGroup.add(seg1, seg2);
+    } else {
+      const seg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.048, 0.42, 8), tailMat);
+      seg1.rotation.x = Math.PI * 0.42;
+      seg1.position.set(0, -0.04, -0.19);
+      const seg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.04, 0.44, 8), tailMat);
+      seg2.rotation.x = Math.PI * 0.22;
+      seg2.position.set(0.04, 0.08, -0.5);
+      const tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), tailMat);
+      tailTip.position.set(0.06, 0.25, -0.64);
+      tailGroup.add(seg1, seg2, tailTip);
+    }
     lowerTorso.add(tailGroup);
+  }
+
+  // Sea-Prism Stone Chains around waist (Loki Elbaph)
+  if (spec?.seaChains) {
+    const chainMat = new THREE.MeshStandardMaterial({ color: '#475569', metalness: 0.82, roughness: 0.35 });
+    for (let c = 0; c < 2; c++) {
+      const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.35 + c * 0.015, 0.032, 6, 16), chainMat);
+      wrap.rotation.x = Math.PI / 2 + (c === 0 ? 0.18 : -0.18);
+      wrap.position.set(0, 0.08 + c * 0.11, 0);
+      lowerTorso.add(wrap);
+    }
   }
 
   // 2. UPPER TORSO (Chest & Shoulders pivot at y = 0.20 inside lowerTorso)
@@ -1768,6 +2827,45 @@ export function buildR15AvatarMesh(
         btn.position.set(0, by, chestD * 0.5 + 0.012);
         upperTorso.add(btn);
       });
+    } else if (cfg.outfit === 'tactical_vest') {
+      const vestMat = new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.72 });
+      const strapAccMat = new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.78 });
+      const vestBody = new THREE.Mesh(
+        new RoundedBoxGeometry(chestW + 0.025, 0.5, chestD + 0.025, 2, 0.05),
+        vestMat,
+      );
+      vestBody.position.set(0, 0.31, 0);
+      upperTorso.add(vestBody);
+      [-0.18, 0.18].forEach((px) => {
+        const pouch = new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.16, 0.05, 2, 0.015), strapAccMat);
+        pouch.position.set(px, 0.23, chestD * 0.5 + 0.022);
+        upperTorso.add(pouch);
+      });
+    } else if (cfg.outfit === 'tunic') {
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.19, 0.1, 12), torsoMat);
+      collar.position.set(0, 0.65, 0);
+      const placket = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.44, 0.03), innerShirtMat);
+      placket.position.set(0, 0.36, chestD * 0.5 + 0.01);
+      upperTorso.add(collar, placket);
+      [0.24, 0.36, 0.48].forEach((by) => {
+        const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.025, 8), buttonMat);
+        btn.rotation.x = Math.PI / 2;
+        btn.position.set(0, by, chestD * 0.5 + 0.016);
+        upperTorso.add(btn);
+      });
+    } else if (cfg.outfit === 'outdoor_vest') {
+      const vestMat = new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.68 });
+      [-0.17, 0.17].forEach((vx) => {
+        const vestSide = new THREE.Mesh(
+          new RoundedBoxGeometry(0.24, 0.54, chestD + 0.02, 2, 0.04),
+          vestMat,
+        );
+        vestSide.position.set(vx, 0.31, 0);
+        upperTorso.add(vestSide);
+      });
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.19, 0.1, 12), vestMat);
+      collar.position.set(0, 0.65, 0);
+      upperTorso.add(collar);
     } else if (cfg.outfit === 'casual') {
       const collarOpen = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.22, 3), innerShirtMat);
       collarOpen.rotation.x = Math.PI;
@@ -1780,6 +2878,21 @@ export function buildR15AvatarMesh(
       kacu.rotation.x = Math.PI;
       kacu.position.set(0, 0.44, chestD * 0.5 + 0.016);
       upperTorso.add(collarOpen, kacu);
+    }
+
+    // Neck Scarf / Knit Scarf Accessory
+    if (cfg.neckAccessory === 'scarf' || cfg.neckAccessory === 'knit_scarf') {
+      const scarfMat = new THREE.MeshStandardMaterial({
+        color: cfg.neckAccessory === 'knit_scarf' ? '#f43f5e' : '#0284c7',
+        roughness: 0.85,
+      });
+      const scarfRing = new THREE.Mesh(SHARED_GEO.scarfRing, scarfMat);
+      scarfRing.rotation.x = Math.PI / 2;
+      scarfRing.position.set(0, 0.65, 0);
+      const scarfTail = new THREE.Mesh(SHARED_GEO.scarfTail, scarfMat);
+      scarfTail.position.set(0.1, 0.44, chestD * 0.5 + 0.02);
+      scarfTail.rotation.z = -0.14;
+      upperTorso.add(scarfRing, scarfTail);
     }
   } else {
     // Costume chest emblems & armor details
@@ -1837,23 +2950,32 @@ export function buildR15AvatarMesh(
     // Long Coat / Mantle / Haori styles
     if (spec?.coat) {
       const coatColor =
-        spec.coat === 'akatsuki' || spec.coat === 'yhwach_cloak'
-          ? '#09090b'
-          : spec.coat === 'marine' ||
-              spec.coat === 'hokage' ||
-              spec.coat === 'captain_white' ||
-              spec.coat === 'sleeveless_captain' ||
-              spec.coat === 'espada'
-            ? '#f8fafc'
-            : spec.coat === 'feather_cape'
-              ? '#6b21a8'
-              : spec.coat === 'tsunade_haori'
-                ? '#16a34a'
-                : spec.coat === 'jiraiya_haori'
-                  ? '#b91c1c'
-                  : spec.coat === 'whis_robe'
-                    ? '#7f1d1d'
-                    : '#dc2626';
+        spec.imuSilhouette
+          ? '#050507'
+          : spec.coat === 'akatsuki' || spec.coat === 'yhwach_cloak'
+            ? '#09090b'
+            : spec.coat === 'marine' ||
+                spec.coat === 'hokage' ||
+                spec.coat === 'captain_white' ||
+                spec.coat === 'sleeveless_captain' ||
+                spec.coat === 'espada' ||
+                spec.coat === 'sternritter'
+              ? '#f8fafc'
+              : spec.coat === 'feather_cape'
+                ? '#6b21a8'
+                : spec.coat === 'tsunade_haori'
+                  ? '#16a34a'
+                  : spec.coat === 'survey_cape'
+                    ? '#14532d'
+                    : spec.coat === 'royal_dark_gold'
+                      ? '#1e1b4b'
+                      : spec.coat === 'elbaph_fur'
+                        ? '#57534e'
+                        : spec.coat === 'jiraiya_haori' || spec.coat === 'levitation_cloak'
+                          ? '#b91c1c'
+                          : spec.coat === 'whis_robe'
+                            ? '#7f1d1d'
+                            : '#dc2626';
       const coatMat = new THREE.MeshStandardMaterial({ color: coatColor, roughness: 0.65, side: THREE.DoubleSide });
       if (spec.coat === 'gundala_scarf') {
         const scarf = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.07, 8, 18), coatMat);
@@ -1863,45 +2985,230 @@ export function buildR15AvatarMesh(
         tail.rotation.x = -0.35;
         tail.position.set(0.14, 0.42, -0.28);
         upperTorso.add(scarf, tail);
-      } else if (spec.coat === 'feather_cape') {
-        const fluff = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.14, 10, 18), coatMat);
+      } else if (spec.coat === 'feather_cape' || spec.coat === 'elbaph_fur') {
+        const furCol = spec.coat === 'elbaph_fur' ? '#d6d3d1' : coatColor;
+        const fluffMat = new THREE.MeshStandardMaterial({ color: furCol, roughness: 0.85, side: THREE.DoubleSide });
+        const fluff = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.13, 8, 16), fluffMat);
         fluff.rotation.x = Math.PI / 2;
-        fluff.position.set(0, 0.62, -0.08);
-        const backPlume = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.9, 0.12), coatMat);
-        backPlume.position.set(0, 0.14, -0.24);
+        fluff.position.set(0, 0.61, -0.06);
+        const backPlume = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.92, 0.1), coatMat);
+        backPlume.position.set(0, 0.12, -0.24);
         upperTorso.add(fluff, backPlume);
-      } else {
+      } else if (spec.coat === 'survey_cape') {
+        const cloak = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.66, 0.05), coatMat);
+        cloak.position.set(0, 0.28, -0.23);
+        const hood = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.16, 0.24, 2, 0.05), coatMat);
+        hood.position.set(0, 0.65, -0.14);
+        const wingsBadge = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.32, 0.32),
+          new THREE.MeshBasicMaterial({
+            map: getProceduralTexture('aot_wings_back', (ctx, w, h) => {
+              ctx.fillStyle = '#14532d';
+              ctx.fillRect(0, 0, w, h);
+              ctx.fillStyle = '#f8fafc';
+              ctx.beginPath();
+              ctx.moveTo(w * 0.5, h * 0.25);
+              ctx.lineTo(w * 0.14, h * 0.18);
+              ctx.lineTo(w * 0.34, h * 0.78);
+              ctx.closePath();
+              ctx.fill();
+              ctx.fillStyle = '#38bdf8';
+              ctx.beginPath();
+              ctx.moveTo(w * 0.5, h * 0.25);
+              ctx.lineTo(w * 0.86, h * 0.18);
+              ctx.lineTo(w * 0.66, h * 0.78);
+              ctx.closePath();
+              ctx.fill();
+            }, 128, 128),
+          }),
+        );
+        wingsBadge.rotation.y = Math.PI;
+        wingsBadge.position.set(0, 0.34, -0.26);
+        upperTorso.add(cloak, hood, wingsBadge);
+      } else if (spec.coat === 'whis_robe') {
         const coatSkirt = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.54, 0.78, 14, 1, true), coatMat);
         coatSkirt.position.set(0, -0.1, -0.02);
         upperTorso.add(coatSkirt);
-        if (spec.coat === 'whis_robe') {
-          const robeTrim = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.525, 0.545, 0.09, 14, 1, true),
-            new THREE.MeshStandardMaterial({ color: '#38bdf8', roughness: 0.45, side: THREE.DoubleSide }),
-          );
-          robeTrim.position.set(0, -0.45, -0.02);
-          upperTorso.add(robeTrim);
-        } else {
-          const highCollar = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.26, 0.28, 0.22, 12, 1, true, Math.PI * 0.2, Math.PI * 1.6),
+        const robeTrim = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.525, 0.545, 0.09, 14, 1, true),
+          new THREE.MeshStandardMaterial({ color: '#38bdf8', roughness: 0.45, side: THREE.DoubleSide }),
+        );
+        robeTrim.position.set(0, -0.45, -0.02);
+        upperTorso.add(robeTrim);
+      } else {
+        // Open-Front 3-Panel Coat / Haori / Cloak (NO closed cylinder skirt around legs):
+        // 1) Wide Rear Coat Panel (-Z), 2) Left Front Panel (-X,+Z), 3) Right Front Panel (+X,+Z)
+        // Leaves center front (+Z) clearly open to reveal inner shirt, belt, and ninja pants!
+        const backPanelW = chestW + 0.16;
+        const coatH = 0.94;
+        const backCoat = new THREE.Mesh(
+          new THREE.BoxGeometry(backPanelW, coatH, 0.045),
+          coatMat,
+        );
+        backCoat.position.set(0, 0.08, -chestD * 0.5 - 0.042);
+        backCoat.rotation.x = 0.08;
+        upperTorso.add(backCoat);
+
+        // Two side-front lapels wrapping cleanly around left/right edges while keeping center +Z open
+        const flapW = isFemale ? 0.17 : 0.21;
+        const flapD = chestD * 0.58;
+        const flapX = chestW * 0.5 - flapW * 0.24;
+        [-1, 1].forEach((side) => {
+          const frontFlap = new THREE.Mesh(
+            new THREE.BoxGeometry(flapW, coatH - 0.03, flapD),
             coatMat,
           );
-          highCollar.position.set(0, 0.7, -0.02);
-          upperTorso.add(highCollar);
-        }
-        if (spec.coat === 'akatsuki') {
-          const cloud = new THREE.Mesh(
-            new THREE.SphereGeometry(0.09, 8, 6),
+          frontFlap.position.set(side * flapX, 0.08, 0.07);
+          frontFlap.rotation.y = side * -0.14;
+          frontFlap.rotation.z = side * 0.05;
+          upperTorso.add(frontFlap);
+
+          if (spec.coat === 'hokage' || spec.coat === 'jiraiya_haori') {
+            const hemMat = new THREE.MeshStandardMaterial({
+              color: spec.coat === 'hokage' ? '#dc2626' : '#facc15',
+              roughness: 0.58,
+            });
+            const flapHem = new THREE.Mesh(
+              new THREE.BoxGeometry(flapW + 0.008, 0.14, flapD + 0.008),
+              hemMat,
+            );
+            flapHem.position.set(side * (flapX + 0.02), -0.32, 0.07);
+            flapHem.rotation.y = side * -0.14;
+            flapHem.rotation.z = side * 0.05;
+            upperTorso.add(flapHem);
+          }
+        });
+
+        // Open front high collar (gap centered at +Z)
+        const collarMat =
+          spec.coat === 'royal_dark_gold' || spec.coat === 'levitation_cloak'
+            ? new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.75, roughness: 0.25, side: THREE.DoubleSide })
+            : coatMat;
+        const highCollar = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.26, 0.28, 0.22, 12, 1, true, Math.PI * 0.24, Math.PI * 1.52),
+          collarMat,
+        );
+        highCollar.position.set(0, 0.7, -0.02);
+        upperTorso.add(highCollar);
+
+        // Cached procedural rear coat pattern facing -Z (Hokage flame hem + kanji, Akatsuki clouds, Marine Justice, Captain haori)
+        if (spec.coat === 'hokage') {
+          const kanji = spec.backLogoText || (suit === 'naruto' ? '七代目' : suit === 'hiruzen' ? '三代目' : '四代目');
+          const hokageTex = getProceduralTexture(
+            `hokage_back_${kanji}`,
+            (ctx, w, h) => {
+              ctx.fillStyle = '#f8fafc';
+              ctx.fillRect(0, 0, w, h);
+              // Iconic red flame triangles rising along bottom hem
+              ctx.fillStyle = '#dc2626';
+              ctx.beginPath();
+              ctx.moveTo(0, h);
+              const peaks = [0, 0.14, 0.28, 0.42, 0.56, 0.7, 0.84, 1.0];
+              peaks.forEach((p, idx) => {
+                const px = p * w;
+                const py = idx % 2 === 1 ? h * 0.66 : h * 0.87;
+                ctx.lineTo(px, py);
+              });
+              ctx.lineTo(w, h);
+              ctx.closePath();
+              ctx.fill();
+              // Vertical Hokage kanji on upper-mid back
+              ctx.fillStyle = '#b91c1c';
+              ctx.font = '900 40px serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              const chars = Array.from(`${kanji}火影`);
+              const startY = h * 0.14;
+              const stepY = (h * 0.46) / Math.max(1, chars.length);
+              chars.forEach((ch, idx) => {
+                ctx.fillText(ch, w * 0.5, startY + idx * stepY);
+              });
+            },
+            256,
+            256,
+          );
+          const backDecal = new THREE.Mesh(
+            new THREE.PlaneGeometry(backPanelW - 0.03, coatH - 0.04),
+            new THREE.MeshBasicMaterial({ map: hokageTex }),
+          );
+          backDecal.rotation.y = Math.PI;
+          backDecal.rotation.x = -0.08;
+          backDecal.position.set(0, 0.08, -chestD * 0.5 - 0.068);
+          upperTorso.add(backDecal);
+        } else if (spec.coat === 'akatsuki') {
+          // Front lapel cloud accent (+Z)
+          const lapelCloud = new THREE.Mesh(
+            new THREE.SphereGeometry(0.072, 8, 6),
             new THREE.MeshBasicMaterial({ color: '#dc2626' }),
           );
-          cloud.scale.set(1.5, 0.7, 0.3);
-          cloud.position.set(0.15, 0.35, 0.21);
-          upperTorso.add(cloud);
-        }
-        if (spec.coat === 'captain_white' || spec.coat === 'sleeveless_captain') {
-          const haoriBack = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.85, 0.06), coatMat);
-          haoriBack.position.set(0, 0.12, -0.23);
-          upperTorso.add(haoriBack);
+          lapelCloud.scale.set(1.4, 0.65, 0.3);
+          lapelCloud.position.set(flapX + 0.01, 0.34, 0.2);
+          upperTorso.add(lapelCloud);
+
+          // Back crimson clouds with crisp white border (-Z)
+          const akaTex = getProceduralTexture(
+            'akatsuki_coat_back',
+            (ctx, w, h) => {
+              ctx.fillStyle = '#09090b';
+              ctx.fillRect(0, 0, w, h);
+              const drawCloud = (cx: number, cy: number, s: number) => {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.scale(s, s);
+                ctx.fillStyle = '#dc2626';
+                ctx.strokeStyle = '#f8fafc';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(-16, 4, 14, Math.PI * 0.6, Math.PI * 1.9);
+                ctx.arc(0, -6, 17, Math.PI, Math.PI * 2);
+                ctx.arc(17, 4, 13, Math.PI * 1.1, Math.PI * 0.45);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+              };
+              drawCloud(w * 0.34, h * 0.28, 0.92);
+              drawCloud(w * 0.68, h * 0.54, 0.85);
+              drawCloud(w * 0.36, h * 0.78, 0.9);
+            },
+            256,
+            256,
+          );
+          const akaBack = new THREE.Mesh(
+            new THREE.PlaneGeometry(backPanelW - 0.03, coatH - 0.04),
+            new THREE.MeshBasicMaterial({ map: akaTex }),
+          );
+          akaBack.rotation.y = Math.PI;
+          akaBack.rotation.x = -0.08;
+          akaBack.position.set(0, 0.08, -chestD * 0.5 - 0.068);
+          upperTorso.add(akaBack);
+        } else if (spec.coat === 'marine') {
+          const marineTex = getProceduralTexture(
+            'marine_justice_back',
+            (ctx, w, h) => {
+              ctx.fillStyle = '#f8fafc';
+              ctx.fillRect(0, 0, w, h);
+              ctx.fillStyle = '#1d4ed8';
+              ctx.fillRect(0, h * 0.88, w, h * 0.12);
+              ctx.fillStyle = '#0f172a';
+              ctx.font = '900 72px serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText('正', w * 0.5, h * 0.34);
+              ctx.fillText('義', w * 0.5, h * 0.62);
+            },
+            256,
+            256,
+          );
+          const marineBack = new THREE.Mesh(
+            new THREE.PlaneGeometry(backPanelW - 0.03, coatH - 0.04),
+            new THREE.MeshBasicMaterial({ map: marineTex }),
+          );
+          marineBack.rotation.y = Math.PI;
+          marineBack.rotation.x = -0.08;
+          marineBack.position.set(0, 0.08, -chestD * 0.5 - 0.068);
+          upperTorso.add(marineBack);
+        } else if (spec.coat === 'captain_white' || spec.coat === 'sleeveless_captain') {
           if (spec.divisionNo) {
             const crestTex = getProceduralTexture(`gotei_div_${spec.divisionNo}`, (ctx, w, h) => {
               ctx.fillStyle = '#f8fafc';
@@ -1922,11 +3229,12 @@ export function buildR15AvatarMesh(
               ctx.fillText(spec.divisionNo || '', w / 2, h / 2 + 8);
             }, 256, 256);
             const divBadge = new THREE.Mesh(
-              new THREE.PlaneGeometry(0.42, 0.42),
+              new THREE.PlaneGeometry(0.44, 0.44),
               new THREE.MeshBasicMaterial({ map: crestTex }),
             );
             divBadge.rotation.y = Math.PI;
-            divBadge.position.set(0, 0.22, -0.265);
+            divBadge.rotation.x = -0.08;
+            divBadge.position.set(0, 0.22, -chestD * 0.5 - 0.068);
             upperTorso.add(divBadge);
           }
         }
@@ -1947,11 +3255,17 @@ export function buildR15AvatarMesh(
       upperTorso.add(knot);
     }
 
-    // Trunks Sword or Killua Skateboard strapped across back (-Z)
-    if (spec?.backProp === 'trunks_sword') {
+    // Back-strapped props (-Z)
+    if (spec?.backProp === 'trunks_sword' || spec?.backProp === 'mirage_sword') {
+      const isMirage = spec.backProp === 'mirage_sword';
       const scabbard = new THREE.Mesh(
-        new THREE.BoxGeometry(0.11, 1.35, 0.07),
-        new THREE.MeshStandardMaterial({ color: '#1e3a8a', roughness: 0.55 }),
+        new THREE.BoxGeometry(0.11, 1.38, 0.06),
+        new THREE.MeshStandardMaterial({
+          color: isMirage ? '#38bdf8' : '#1e3a8a',
+          emissive: isMirage ? '#0284c7' : '#000000',
+          emissiveIntensity: isMirage ? 0.45 : 0,
+          roughness: 0.4,
+        }),
       );
       scabbard.rotation.z = -0.45;
       scabbard.position.set(0.02, 0.35, -0.26);
@@ -1962,6 +3276,26 @@ export function buildR15AvatarMesh(
       hilt.rotation.z = -0.45;
       hilt.position.set(-0.28, 0.92, -0.26);
       upperTorso.add(scabbard, hilt);
+    } else if (spec?.backProp === 'ragnir_back') {
+      const handle = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.042, 0.042, 1.55, 8),
+        new THREE.MeshStandardMaterial({ color: '#451a03', roughness: 0.75 }),
+      );
+      handle.rotation.z = 0.48;
+      handle.position.set(0, 0.35, -0.28);
+      const headBlock = new THREE.Mesh(
+        new RoundedBoxGeometry(0.56, 0.32, 0.32, 2, 0.04),
+        new THREE.MeshStandardMaterial({ color: '#475569', metalness: 0.75, roughness: 0.3 }),
+      );
+      headBlock.rotation.z = 0.48;
+      headBlock.position.set(-0.3, 0.95, -0.3);
+      const goldBand = new THREE.Mesh(
+        new THREE.BoxGeometry(0.58, 0.07, 0.34),
+        new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.85, roughness: 0.2 }),
+      );
+      goldBand.rotation.z = 0.48;
+      goldBand.position.copy(headBlock.position);
+      upperTorso.add(handle, headBlock, goldBand);
     } else if (spec?.backProp === 'killua_skateboard') {
       const deck = new THREE.Mesh(
         new RoundedBoxGeometry(0.28, 0.92, 0.04, 2, 0.015),
@@ -2060,7 +3394,7 @@ export function buildR15AvatarMesh(
                   ? new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.4 })
                   : skinMat;
 
-  const headMesh = new THREE.Mesh(new RoundedBoxGeometry(0.52, 0.52, 0.5, 5, 0.18), headMat);
+  const headMesh = new THREE.Mesh(SHARED_GEO.headBox, headMat);
   if (spec?.headOval) {
     headMesh.scale.set(1.18, 0.94, 0.94);
   }
@@ -2069,8 +3403,29 @@ export function buildR15AvatarMesh(
 
   // Face / Mask (+Z Front)
   const fullMaskType = spec?.fullMask;
+  const hidesFacePlane =
+    fullMaskType === 'ironman' ||
+    fullMaskType === 'ultraman' ||
+    fullMaskType === 'k_cyber' ||
+    fullMaskType === 'spiderman' ||
+    fullMaskType === 'kamen_rider' ||
+    fullMaskType === 'batman' ||
+    fullMaskType === 'obito_mask' ||
+    fullMaskType === 'doom_mask' ||
+    fullMaskType === 'black_panther' ||
+    fullMaskType === 'deadpool' ||
+    fullMaskType === 'wolverine_cowl' ||
+    fullMaskType === 'venom' ||
+    fullMaskType === 'ghost_rider' ||
+    fullMaskType === 'moon_knight' ||
+    fullMaskType === 'skull_brook' ||
+    fullMaskType === 'titan_colossal' ||
+    fullMaskType === 'titan_armored' ||
+    fullMaskType === 'titan_warhammer' ||
+    fullMaskType === 'jogo_volcano';
+
   if (fullMaskType === 'ironman' || fullMaskType === 'ultraman' || fullMaskType === 'k_cyber') {
-    const facePlate = new THREE.Mesh(new RoundedBoxGeometry(0.38, 0.42, 0.08, 3, 0.04), accentMat);
+    const facePlate = new THREE.Mesh(new RoundedBoxGeometry(0.38, 0.42, 0.08, 2, 0.04), accentMat);
     facePlate.position.set(0, -0.02, 0.23);
     const eyeColor = fullMaskType === 'ultraman' ? '#fef08a' : '#22d3ee';
     const eyeGlowMat = new THREE.MeshBasicMaterial({ color: eyeColor });
@@ -2085,16 +3440,21 @@ export function buildR15AvatarMesh(
       fin.position.set(0, 0.32, -0.02);
       headGroup.add(fin);
     }
-  } else if (fullMaskType === 'spiderman' || fullMaskType === 'kamen_rider') {
+  } else if (fullMaskType === 'spiderman' || fullMaskType === 'kamen_rider' || fullMaskType === 'deadpool') {
+    if (fullMaskType === 'deadpool') {
+      const dpMat = new THREE.MeshStandardMaterial({ color: '#b91c1c', roughness: 0.48 });
+      const dpCap = new THREE.Mesh(new RoundedBoxGeometry(0.535, 0.535, 0.515, 3, 0.18), dpMat);
+      headGroup.add(dpCap);
+    }
     const rimMat = new THREE.MeshBasicMaterial({ color: '#09090b' });
     const eyeColor = fullMaskType === 'kamen_rider' ? '#ef4444' : '#ffffff';
     const eyeMat = new THREE.MeshBasicMaterial({ color: eyeColor });
     [-0.1, 0.1].forEach((ex, idx) => {
       const rim = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.12, 0.04), rimMat);
-      rim.position.set(ex, 0.04, 0.245);
+      rim.position.set(ex, 0.04, 0.255);
       rim.rotation.z = idx === 0 ? -0.22 : 0.22;
-      const lens = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.085, 0.045), eyeMat);
-      lens.position.set(ex, 0.04, 0.25);
+      const lens = new THREE.Mesh(new THREE.BoxGeometry(0.105, 0.075, 0.045), eyeMat);
+      lens.position.set(ex, 0.04, 0.26);
       lens.rotation.z = idx === 0 ? -0.22 : 0.22;
       headGroup.add(rim, lens);
     });
@@ -2106,9 +3466,117 @@ export function buildR15AvatarMesh(
         headGroup.add(ant);
       });
     }
+  } else if (fullMaskType === 'doom_mask' || fullMaskType === 'black_panther' || fullMaskType === 'moon_knight') {
+    const maskColor =
+      fullMaskType === 'doom_mask' ? '#94a3b8' : fullMaskType === 'moon_knight' ? '#f8fafc' : '#09090b';
+    const maskMat = new THREE.MeshStandardMaterial({
+      color: maskColor,
+      metalness: fullMaskType === 'doom_mask' ? 0.88 : 0.35,
+      roughness: fullMaskType === 'doom_mask' ? 0.22 : 0.42,
+    });
+    const shell = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.54, 0.52, 3, 0.17), maskMat);
+    headGroup.add(shell);
+    const eyeMat = new THREE.MeshBasicMaterial({
+      color: fullMaskType === 'black_panther' ? '#c084fc' : fullMaskType === 'doom_mask' ? '#38bdf8' : '#ffffff',
+    });
+    [-0.1, 0.1].forEach((ex) => {
+      const slit = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.04, 0.04), eyeMat);
+      slit.position.set(ex, 0.04, 0.265);
+      slit.rotation.z = ex < 0 ? -0.15 : 0.15;
+      headGroup.add(slit);
+    });
+    if (fullMaskType === 'black_panther') {
+      [-0.18, 0.18].forEach((ex) => {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 4), maskMat);
+        ear.position.set(ex, 0.3, -0.02);
+        headGroup.add(ear);
+      });
+    }
+  } else if (fullMaskType === 'wolverine_cowl') {
+    const yellowMat = new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.4 });
+    const blackMat = new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.45 });
+    const dome = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.36, 0.52, 3, 0.12), yellowMat);
+    dome.position.set(0, 0.1, 0);
+    const jaw = new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.2, 0.14, 2, 0.05), skinMat);
+    jaw.position.set(0, -0.15, 0.21);
+    const eyeWhite = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+    [-0.15, 0.15].forEach((wx) => {
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.32, 0.32), blackMat);
+      fin.position.set(wx * 1.45, 0.2, 0.04);
+      fin.rotation.z = wx < 0 ? 0.35 : -0.35;
+      const lens = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.045, 0.04), eyeWhite);
+      lens.position.set(wx * 0.68, 0.04, 0.265);
+      headGroup.add(fin, lens);
+    });
+    headGroup.add(dome, jaw);
+  } else if (fullMaskType === 'venom' || fullMaskType === 'ghost_rider' || fullMaskType === 'skull_brook') {
+    const isVenom = fullMaskType === 'venom';
+    const isGhost = fullMaskType === 'ghost_rider';
+    const headBaseMat = new THREE.MeshStandardMaterial({
+      color: isVenom ? '#050507' : '#f1f5f9',
+      roughness: isVenom ? 0.25 : 0.65,
+    });
+    const cap = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.54, 0.52, 3, 0.16), headBaseMat);
+    headGroup.add(cap);
+    const eyeMat = new THREE.MeshBasicMaterial({ color: isGhost ? '#fb923c' : isVenom ? '#ffffff' : '#09090b' });
+    [-0.11, 0.11].forEach((ex, idx) => {
+      const eye = new THREE.Mesh(new THREE.BoxGeometry(0.13, isVenom ? 0.09 : 0.11, 0.04), eyeMat);
+      eye.position.set(ex, 0.05, 0.26);
+      eye.rotation.z = idx === 0 ? -0.25 : 0.25;
+      headGroup.add(eye);
+    });
+    const mouth = new THREE.Mesh(
+      new THREE.BoxGeometry(0.32, 0.12, 0.04),
+      new THREE.MeshBasicMaterial({ color: isVenom ? '#dc2626' : '#0f172a' }),
+    );
+    mouth.position.set(0, -0.13, 0.26);
+    headGroup.add(mouth);
+    if (isGhost) {
+      const fireMat = new THREE.MeshBasicMaterial({ color: '#f97316' });
+      [-0.1, 0, 0.1].forEach((fx, fi) => {
+        const flame = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.38 - Math.abs(fi - 1) * 0.08, 6), fireMat);
+        flame.position.set(fx, 0.42, -0.02);
+        headGroup.add(flame);
+      });
+    }
+  } else if (
+    fullMaskType === 'titan_colossal' ||
+    fullMaskType === 'titan_armored' ||
+    fullMaskType === 'titan_warhammer' ||
+    fullMaskType === 'jogo_volcano'
+  ) {
+    const tColor =
+      fullMaskType === 'titan_colossal'
+        ? '#991b1b'
+        : fullMaskType === 'titan_armored'
+          ? '#d6d3d1'
+          : fullMaskType === 'titan_warhammer'
+            ? '#e2e8f0'
+            : '#334155';
+    const tMat = new THREE.MeshStandardMaterial({ color: tColor, roughness: 0.48 });
+    const shell = new THREE.Mesh(new RoundedBoxGeometry(0.55, 0.55, 0.53, 3, 0.15), tMat);
+    headGroup.add(shell);
+    const eyeMat = new THREE.MeshBasicMaterial({
+      color: fullMaskType === 'titan_warhammer' ? '#bae6fd' : fullMaskType === 'jogo_volcano' ? '#09090b' : '#fde047',
+    });
+    if (fullMaskType === 'jogo_volcano') {
+      const cyclops = new THREE.Mesh(new THREE.CircleGeometry(0.11, 12), eyeMat);
+      cyclops.position.set(0, 0.04, 0.27);
+      const crater = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.28, 10), tMat);
+      crater.position.set(0, 0.36, 0);
+      const lava = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: '#f97316' }));
+      lava.position.set(0, 0.48, 0);
+      headGroup.add(cyclops, crater, lava);
+    } else {
+      [-0.11, 0.11].forEach((ex) => {
+        const eye = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.045, 0.04), eyeMat);
+        eye.position.set(ex, 0.05, 0.268);
+        headGroup.add(eye);
+      });
+    }
   } else {
     if (fullMaskType === 'batman' || fullMaskType === 'flash') {
-      const jaw = new THREE.Mesh(new RoundedBoxGeometry(0.4, 0.19, 0.12, 3, 0.05), skinMat);
+      const jaw = new THREE.Mesh(new RoundedBoxGeometry(0.4, 0.19, 0.12, 2, 0.05), skinMat);
       jaw.position.set(0, -0.15, 0.21);
       headGroup.add(jaw);
       if (fullMaskType === 'batman') {
@@ -2116,6 +3584,13 @@ export function buildR15AvatarMesh(
           const batEar = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.24, 5), headMat);
           batEar.position.set(bx, 0.34, 0);
           headGroup.add(batEar);
+        });
+        const cowlEyeMat = new THREE.MeshBasicMaterial({ color: '#f8fafc' });
+        [-0.1, 0.1].forEach((ex) => {
+          const cowlEye = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.042, 0.04), cowlEyeMat);
+          cowlEye.position.set(ex, 0.04, 0.248);
+          cowlEye.rotation.z = ex < 0 ? -0.16 : 0.16;
+          headGroup.add(cowlEye);
         });
       } else {
         [-0.27, 0.27].forEach((wx) => {
@@ -2126,7 +3601,7 @@ export function buildR15AvatarMesh(
       }
     } else if (fullMaskType === 'kakashi') {
       const faceMask = new THREE.Mesh(
-        new RoundedBoxGeometry(0.53, 0.24, 0.26, 3, 0.05),
+        new RoundedBoxGeometry(0.53, 0.24, 0.26, 2, 0.05),
         new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.7 }),
       );
       faceMask.position.set(0, -0.12, 0.14);
@@ -2140,205 +3615,249 @@ export function buildR15AvatarMesh(
       headGroup.add(patch);
     } else if (fullMaskType === 'obito_mask') {
       const mask = new THREE.Mesh(
-        new RoundedBoxGeometry(0.54, 0.52, 0.12, 4, 0.08),
+        new RoundedBoxGeometry(0.54, 0.52, 0.12, 3, 0.08),
         new THREE.MeshStandardMaterial({ color: '#ea580c', roughness: 0.4 }),
       );
       mask.position.set(0, 0, 0.24);
       const hole = new THREE.Mesh(
-        new THREE.CircleGeometry(0.05, 10),
+        new THREE.CircleGeometry(0.05, 8),
         new THREE.MeshBasicMaterial({ color: '#09090b' }),
       );
       hole.position.set(0.09, 0.04, 0.305);
       headGroup.add(mask, hole);
     } else if (fullMaskType === 'grimmjow_jaw') {
       const jaw = new THREE.Mesh(
-        new RoundedBoxGeometry(0.28, 0.16, 0.22, 3, 0.04),
+        new RoundedBoxGeometry(0.28, 0.16, 0.22, 2, 0.04),
         new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.35 }),
       );
       jaw.position.set(0.18, -0.14, 0.12);
       headGroup.add(jaw);
     }
 
-    const scleraMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
-    const irisMat = new THREE.MeshBasicMaterial({
-      color:
-        fullMaskType === 'batman'
-          ? '#f8fafc'
-          : suit === 'itachi' || suit === 'madara' || suit === 'obito'
-            ? '#dc2626'
-            : suit === 'ulquiorra'
-              ? '#10b981'
-              : suit === 'beerus'
-                ? '#f59e0b'
-                : suit === 'zeno'
-                  ? '#09090b'
-                  : '#1e293b',
-    });
-    const catchlightMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
-
-    if (fullMaskType !== 'obito_mask') {
-      [-0.1, 0.1].forEach((ex) => {
-        if (fullMaskType === 'batman') {
-          const cowlEye = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.042, 0.04), scleraMat);
-          cowlEye.position.set(ex, 0.04, 0.248);
-          cowlEye.rotation.z = ex < 0 ? -0.16 : 0.16;
-          headGroup.add(cowlEye);
-        } else {
-          const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 10), scleraMat);
-          sclera.scale.set(0.96, 1.24, 0.54);
-          sclera.position.set(ex, 0.03, 0.235);
-          const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.042, 8, 8), irisMat);
-          pupil.scale.set(0.9, 1.12, 0.6);
-          pupil.position.set(ex, 0.028, 0.254);
-          const catchlight = new THREE.Mesh(new THREE.SphereGeometry(0.015, 6, 6), catchlightMat);
-          catchlight.position.set(ex + 0.016, 0.056, 0.268);
-          const upperLid = new THREE.Mesh(
-            new THREE.BoxGeometry(0.115, 0.022, 0.026),
-            new THREE.MeshBasicMaterial({ color: '#09090b' }),
-          );
-          upperLid.position.set(ex, 0.088, 0.252);
-          const brow = new THREE.Mesh(new RoundedBoxGeometry(0.105, 0.022, 0.025, 2, 0.01), hairMat);
-          brow.position.set(ex, 0.122, 0.246);
-          brow.rotation.z = ex < 0 ? 0.08 : -0.08;
-          headGroup.add(sclera, pupil, catchlight, upperLid, brow);
-          if (isFemale || suit === 'boa_hancock' || suit === 'nami' || suit === 'nico_robin' || suit === 'rukia' || suit === 'tsunade') {
-            const lash = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.018, 0.02), new THREE.MeshBasicMaterial({ color: '#09090b' }));
-            lash.position.set(ex + (ex < 0 ? -0.045 : 0.045), 0.072, 0.256);
-            headGroup.add(lash);
-          }
-        }
+    // Single lightweight 128x128 CanvasTexture facePlane (+Z)
+    if (!hidesFacePlane) {
+      const faceTex = getAnimeFaceTexture({
+        characterId: suit,
+        expression: cfg.faceExpression || 'auto',
+        age: cfg.faceAge || 'young',
+        eyeStyle: cfg.eyeStyle || 'auto',
+        isFemale,
+        hairColor,
+        spec,
       });
-
-      if (fullMaskType !== 'kakashi') {
-        const nose = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), skinMat);
-        nose.position.set(0, -0.025, 0.262);
-        const smile = new THREE.Mesh(
-          new THREE.TorusGeometry(0.065, 0.014, 6, 12, Math.PI),
-          new THREE.MeshBasicMaterial({ color: isFemale ? '#be123c' : '#9a3412' }),
-        );
-        smile.rotation.z = Math.PI;
-        smile.position.set(0, -0.09, 0.248);
-        headGroup.add(nose, smile);
+      const faceMat = new THREE.MeshBasicMaterial({
+        map: faceTex,
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      const facePlane = new THREE.Mesh(SHARED_GEO.facePlane, faceMat);
+      if (spec?.headOval) {
+        facePlane.scale.set(1.12, 0.94, 1);
+        facePlane.position.set(0, 0, 0.238);
+      } else {
+        facePlane.position.set(0, 0, 0.253);
       }
+      headGroup.add(facePlane);
     }
 
-    // Character facial extras
-    if (spec?.byakugouSeal) {
-      const diamond = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.035, 0),
-        new THREE.MeshBasicMaterial({ color: '#6366f1' }),
-      );
-      diamond.scale.set(0.8, 1.3, 0.3);
-      diamond.position.set(0, 0.14, 0.256);
-      headGroup.add(diamond);
-    }
-    if (spec?.ulquiorraTears) {
-      const tearMat = new THREE.MeshBasicMaterial({ color: '#10b981' });
-      [-0.1, 0.1].forEach((tx) => {
-        const tear = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.14, 0.02), tearMat);
-        tear.position.set(tx, -0.06, 0.254);
-        headGroup.add(tear);
-      });
-    }
-    if (spec?.whiteBeard) {
+    // 3D Chin Beard for elder faceAge or Yamamoto (gives crisp side profile)
+    if (
+      (spec?.whiteBeard || cfg.faceAge === 'elder') &&
+      !hidesFacePlane &&
+      fullMaskType !== 'kakashi'
+    ) {
       const beard = new THREE.Mesh(
-        new THREE.ConeGeometry(0.22, 0.42, 8),
+        SHARED_GEO.elderBeard,
         new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.85 }),
       );
       beard.rotation.x = Math.PI;
-      beard.position.set(0, -0.26, 0.18);
-      const cross1 = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.022, 0.02), new THREE.MeshBasicMaterial({ color: '#991b1b' }));
-      cross1.position.set(0.08, 0.14, 0.256);
-      const cross2 = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.14, 0.02), new THREE.MeshBasicMaterial({ color: '#991b1b' }));
-      cross2.position.set(0.08, 0.14, 0.256);
-      headGroup.add(beard, cross1, cross2);
+      beard.position.set(0, -0.25, 0.17);
+      headGroup.add(beard);
     }
-    if (spec?.hisokaMarks) {
-      const star = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.03, 0),
-        new THREE.MeshBasicMaterial({ color: '#ec4899' }),
-      );
-      star.scale.set(1, 1, 0.25);
-      star.position.set(-0.14, -0.04, 0.258);
-      const tear = new THREE.Mesh(
-        new THREE.ConeGeometry(0.025, 0.055, 6),
-        new THREE.MeshBasicMaterial({ color: '#38bdf8' }),
-      );
-      tear.position.set(0.14, -0.04, 0.258);
-      headGroup.add(star, tear);
-    }
+
     if (spec?.snakeEarrings) {
       const goldMat = new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.85, roughness: 0.25 });
       [-0.29, 0.29].forEach((ex) => {
-        const ear = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.015, 6, 12), goldMat);
+        const ear = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.015, 6, 10), goldMat);
         ear.position.set(ex, -0.08, 0);
         headGroup.add(ear);
       });
     }
   }
 
-  // Hair rendering (distinct front anime bangs on +Z and full rear hair coverage on -Z so zero skin shows behind)
+  // Eye Blindfold (Gojo Satoru / Prince Loki)
+  if (spec?.eyeBandage) {
+    const blindfold = new THREE.Mesh(
+      new RoundedBoxGeometry(0.55, 0.145, 0.535, 2, 0.025),
+      new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.85 }),
+    );
+    blindfold.position.set(0, 0.055, 0.01);
+    headGroup.add(blindfold);
+  }
+
+  // Mythological Animal Snouts / Trunks
+  if (spec?.jackalHead) {
+    const snoutMat = new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.45 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.85, roughness: 0.25 });
+    const snout = new THREE.Mesh(new RoundedBoxGeometry(0.22, 0.16, 0.28, 2, 0.04), snoutMat);
+    snout.position.set(0, -0.06, 0.3);
+    const nemesL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.48, 0.36), goldMat);
+    nemesL.position.set(-0.27, -0.04, -0.04);
+    const nemesR = nemesL.clone();
+    nemesR.position.x = 0.27;
+    headGroup.add(snout, nemesL, nemesR);
+  }
+  if (spec?.falconHead) {
+    const beakMat = new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.7, roughness: 0.28 });
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.24, 5), beakMat);
+    beak.rotation.x = Math.PI * 0.56;
+    beak.position.set(0, -0.02, 0.33);
+    headGroup.add(beak);
+  }
+  if (spec?.elephantHead) {
+    const trunkMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.6 });
+    const earMat = new THREE.MeshStandardMaterial({ color: '#f9a8d4', roughness: 0.65 });
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.04, 0.34, 8), trunkMat);
+    trunk.rotation.x = Math.PI * 0.36;
+    trunk.position.set(0, -0.1, 0.33);
+    [-0.36, 0.36].forEach((ex) => {
+      const ear = new THREE.Mesh(new RoundedBoxGeometry(0.22, 0.34, 0.06, 2, 0.03), earMat);
+      ear.position.set(ex, 0.02, -0.04);
+      ear.rotation.y = ex < 0 ? 0.3 : -0.3;
+      headGroup.add(ear);
+    });
+    headGroup.add(trunk);
+  }
+
+  // Imu Tall Crown / Dragon Horns / Ram Horns / Sun Disk / Quetzal Headdress
+  if (spec?.imuCrownTall) {
+    const crownMat = new THREE.MeshStandardMaterial({ color: '#050507', roughness: 0.65 });
+    const tallBase = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.26, 0.52, 8), crownMat);
+    tallBase.position.set(0, 0.52, -0.01);
+    headGroup.add(tallBase);
+    [-0.14, 0, 0.14].forEach((sx, si) => {
+      const sp = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.26, 5), crownMat);
+      sp.position.set(sx, 0.85 - Math.abs(si - 1) * 0.06, 0);
+      headGroup.add(sp);
+    });
+  }
+  if (spec?.dragonHorns) {
+    const dHornMat = new THREE.MeshStandardMaterial({ color: '#1e1b4b', roughness: 0.38 });
+    [-0.22, 0.22].forEach((hx) => {
+      const h1 = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.44, 7), dHornMat);
+      h1.position.set(hx, 0.34, -0.02);
+      h1.rotation.z = hx < 0 ? 0.55 : -0.55;
+      h1.rotation.x = -0.25;
+      headGroup.add(h1);
+    });
+  }
+  if (spec?.ramHorns) {
+    const rHornMat = new THREE.MeshStandardMaterial({ color: '#78350f', roughness: 0.55 });
+    [-0.27, 0.27].forEach((hx) => {
+      const curl = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.045, 6, 12, Math.PI * 1.45), rHornMat);
+      curl.position.set(hx, 0.2, -0.02);
+      curl.rotation.y = Math.PI / 2;
+      headGroup.add(curl);
+    });
+  }
+  if (spec?.sunDisk) {
+    const sunOrb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.17, 12, 10),
+      new THREE.MeshBasicMaterial({ color: '#facc15' }),
+    );
+    sunOrb.position.set(0, 0.44, 0);
+    const sunRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.22, 0.025, 6, 16),
+      new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.85, roughness: 0.2 }),
+    );
+    sunRing.position.copy(sunOrb.position);
+    headGroup.add(sunOrb, sunRing);
+  }
+  if (spec?.quetzalCrown) {
+    const emMat = new THREE.MeshStandardMaterial({ color: '#10b981', roughness: 0.45 });
+    const gldMat = new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.8, roughness: 0.25 });
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.1, 12), gldMat);
+    band.position.set(0, 0.24, 0);
+    headGroup.add(band);
+    for (let f = -2; f <= 2; f++) {
+      const feather = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.36, 0.03), emMat);
+      feather.position.set(f * 0.1, 0.42 - Math.abs(f) * 0.03, -0.1);
+      feather.rotation.z = -f * 0.22;
+      headGroup.add(feather);
+    }
+  }
+
+  // Hair & Hijab rendering (uses SHARED_GEO for 60 FPS potato-PC safety)
   const effectiveHair = spec
     ? spec.hairMode || 'none'
     : cfg.hairStyle;
 
   if (effectiveHair !== 'none' && effectiveHair !== 'covered' && effectiveHair !== 'bald') {
-    // Full rear skull hair shell (-Z) covering entire back of head cleanly
-    if (effectiveHair !== 'hijab') {
-      const fullRearShell = new THREE.Mesh(
-        new RoundedBoxGeometry(0.55, 0.48, 0.17, 4, 0.08),
-        hairMat,
-      );
+    const isHijabStyle = effectiveHair === 'hijab' || effectiveHair === 'hijab_sport';
+    if (!isHijabStyle && effectiveHair !== 'mohawk') {
+      const fullRearShell = new THREE.Mesh(SHARED_GEO.hairRearShell, hairMat);
       fullRearShell.position.set(0, 0.03, -0.2);
       headGroup.add(fullRearShell);
     }
 
-    if (
+    if (effectiveHair === 'mohawk') {
+      const fin = new THREE.Mesh(SHARED_GEO.mohawkFin, hairMat);
+      fin.position.set(0, 0.3, -0.01);
+      headGroup.add(fin);
+      [-0.14, 0, 0.14].forEach((mz) => {
+        const spike = new THREE.Mesh(SHARED_GEO.mohawkSpike, hairMat);
+        spike.position.set(0, 0.43, mz);
+        spike.rotation.x = mz * 0.8;
+        headGroup.add(spike);
+      });
+    } else if (
       effectiveHair === 'short' ||
       effectiveHair === 'spiky' ||
       effectiveHair === 'gon_spiky' ||
       effectiveHair === 'undercut' ||
       effectiveHair === 'slick'
     ) {
-      const cap = new THREE.Mesh(new RoundedBoxGeometry(0.55, 0.22, 0.54, 4, 0.1), hairMat);
+      const cap = new THREE.Mesh(SHARED_GEO.hairCapShort, hairMat);
       cap.position.set(0, 0.19, -0.01);
       headGroup.add(cap);
-      // Crisp anime front bangs (+Z)
       if (effectiveHair !== 'slick') {
         [-0.14, 0, 0.14].forEach((bx, bi) => {
-          const bang = new THREE.Mesh(new THREE.ConeGeometry(0.072, 0.15, 5), hairMat);
+          const bang = new THREE.Mesh(SHARED_GEO.hairBangCone, hairMat);
           bang.rotation.x = Math.PI - 0.18;
           bang.position.set(bx, 0.145 - (bi === 1 ? 0.015 : 0), 0.242);
           headGroup.add(bang);
         });
       }
       if (effectiveHair !== 'undercut') {
-        const sideL = new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.2, 0.28, 2, 0.03), hairMat);
+        const sideL = new THREE.Mesh(SHARED_GEO.hairSideShort, hairMat);
         sideL.position.set(-0.25, 0.05, -0.05);
-        const sideR = sideL.clone();
-        sideR.position.x = 0.25;
+        const sideR = new THREE.Mesh(SHARED_GEO.hairSideShort, hairMat);
+        sideR.position.set(0.25, 0.05, -0.05);
         headGroup.add(sideL, sideR);
       }
       if (effectiveHair === 'spiky') {
         for (let s = -2; s <= 2; s++) {
-          const spike = new THREE.Mesh(new THREE.ConeGeometry(0.078, 0.24, 6), hairMat);
+          const spike = new THREE.Mesh(SHARED_GEO.hairSpikeCone, hairMat);
           spike.position.set(s * 0.088, 0.35, 0.04);
           spike.rotation.x = 0.25;
           headGroup.add(spike);
         }
       } else if (effectiveHair === 'gon_spiky') {
         for (let s = -2; s <= 2; s++) {
-          const spike = new THREE.Mesh(new THREE.ConeGeometry(0.095, 0.44 - Math.abs(s) * 0.06, 6), hairMat);
+          const spike = new THREE.Mesh(SHARED_GEO.hairGonSpikeCone, hairMat);
+          spike.scale.set(1, 1 - Math.abs(s) * 0.12, 1);
           spike.position.set(s * 0.085, 0.42 - Math.abs(s) * 0.04, -0.01);
           headGroup.add(spike);
         }
       } else if (effectiveHair === 'slick') {
-        const crest = new THREE.Mesh(new RoundedBoxGeometry(0.28, 0.12, 0.45, 3, 0.05), hairMat);
+        const crest = new THREE.Mesh(new RoundedBoxGeometry(0.28, 0.12, 0.45, 2, 0.05), hairMat);
         crest.position.set(0, 0.28, 0.02);
         headGroup.add(crest);
       }
     } else if (effectiveHair === 'curly') {
-      const cap = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.22, 0.54, 4, 0.1), hairMat);
+      const cap = new THREE.Mesh(SHARED_GEO.hairCapShort, hairMat);
       cap.position.set(0, 0.19, -0.02);
       headGroup.add(cap);
       const curlCoords: Array<[number, number, number]> = [
@@ -2352,18 +3871,18 @@ export function buildR15AvatarMesh(
         [0.16, 0.26, -0.18],
       ];
       curlCoords.forEach(([cx, cy, cz]) => {
-        const curl = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 7), hairMat);
+        const curl = new THREE.Mesh(SHARED_GEO.hairCurlSphere, hairMat);
         curl.position.set(cx, cy, cz);
         headGroup.add(curl);
       });
     } else if (effectiveHair === 'side_part' || effectiveHair === 'parted') {
-      const crown = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.22, 0.55, 4, 0.1), hairMat);
+      const crown = new THREE.Mesh(SHARED_GEO.hairCrown, hairMat);
       crown.position.set(0, 0.19, -0.02);
-      const bangL = new THREE.Mesh(new RoundedBoxGeometry(0.26, 0.15, 0.12, 3, 0.05), hairMat);
+      const bangL = new THREE.Mesh(SHARED_GEO.hairBangSide, hairMat);
       bangL.position.set(-0.13, 0.15, 0.22);
       bangL.rotation.z = 0.24;
-      const bangR = bangL.clone();
-      bangR.position.x = 0.13;
+      const bangR = new THREE.Mesh(SHARED_GEO.hairBangSide, hairMat);
+      bangR.position.set(0.13, 0.15, 0.22);
       bangR.rotation.z = -0.24;
       headGroup.add(crown, bangL, bangR);
     } else if (
@@ -2371,77 +3890,152 @@ export function buildR15AvatarMesh(
       effectiveHair === 'long_loose' ||
       effectiveHair === 'long_tie' ||
       effectiveHair === 'ponytail' ||
-      effectiveHair === 'bob'
+      effectiveHair === 'bob' ||
+      effectiveHair === 'single_braid'
     ) {
-      const crown = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.24, 0.55, 4, 0.1), hairMat);
+      const crown = new THREE.Mesh(SHARED_GEO.hairCrown, hairMat);
       crown.position.set(0, 0.18, -0.02);
       const backHair = new THREE.Mesh(
-        new RoundedBoxGeometry(0.54, effectiveHair === 'bob' ? 0.32 : 0.52, 0.22, 4, 0.08),
+        new RoundedBoxGeometry(0.54, effectiveHair === 'bob' ? 0.32 : 0.52, 0.22, 2, 0.08),
         hairMat,
       );
       backHair.position.set(0, -0.06, -0.2);
-      // Anime side-framing bangs (+Z)
-      const fBangL = new THREE.Mesh(new RoundedBoxGeometry(0.24, 0.13, 0.1, 3, 0.04), hairMat);
+      const fBangL = new THREE.Mesh(SHARED_GEO.hairBangSide, hairMat);
       fBangL.position.set(-0.12, 0.16, 0.225);
       fBangL.rotation.z = 0.2;
-      const fBangR = fBangL.clone();
-      fBangR.position.x = 0.12;
+      const fBangR = new THREE.Mesh(SHARED_GEO.hairBangSide, hairMat);
+      fBangR.position.set(0.12, 0.16, 0.225);
       fBangR.rotation.z = -0.2;
       headGroup.add(crown, backHair, fBangL, fBangR);
       if (effectiveHair === 'ponytail' || effectiveHair === 'long_tie') {
         const tieBand = new THREE.Mesh(
-          new THREE.TorusGeometry(0.095, 0.025, 6, 12),
+          new THREE.TorusGeometry(0.095, 0.025, 6, 10),
           new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.6 }),
         );
         tieBand.position.set(0, 0.08, -0.29);
-        const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.088, 0.38, 6, 8), hairMat);
-        tail.position.set(0, -0.06, -0.34);
-        tail.rotation.x = -0.4;
+        const tail = new THREE.Mesh(SHARED_GEO.ponytailTail, hairMat);
+        tail.position.set(0, -0.08, -0.35);
+        tail.rotation.x = -0.38;
         headGroup.add(tieBand, tail);
+      } else if (effectiveHair === 'single_braid') {
+        const tieBand = new THREE.Mesh(
+          new THREE.TorusGeometry(0.08, 0.02, 6, 10),
+          new THREE.MeshStandardMaterial({ color: '#ec4899', roughness: 0.6 }),
+        );
+        tieBand.position.set(0, 0.04, -0.3);
+        headGroup.add(tieBand);
+        for (let b = 0; b < 4; b++) {
+          const seg = new THREE.Mesh(SHARED_GEO.braidSeg, hairMat);
+          seg.scale.setScalar(1 - b * 0.1);
+          seg.position.set(0, -0.04 - b * 0.11, -0.32 - b * 0.02);
+          headGroup.add(seg);
+        }
+        const tip = new THREE.Mesh(SHARED_GEO.braidTip, hairMat);
+        tip.rotation.x = Math.PI;
+        tip.position.set(0, -0.46, -0.39);
+        headGroup.add(tip);
       }
-    } else if (effectiveHair === 'twin_braids' || effectiveHair === 'twin_tails') {
-      const crown = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.24, 0.55, 4, 0.1), hairMat);
+    } else if (effectiveHair === 'twin_braids' || effectiveHair === 'twin_tails' || effectiveHair === 'twintails') {
+      const crown = new THREE.Mesh(SHARED_GEO.hairCrown, hairMat);
       crown.position.set(0, 0.18, -0.02);
-      const fBangL = new THREE.Mesh(new RoundedBoxGeometry(0.24, 0.13, 0.1, 3, 0.04), hairMat);
+      const fBangL = new THREE.Mesh(SHARED_GEO.hairBangSide, hairMat);
       fBangL.position.set(-0.12, 0.16, 0.225);
       fBangL.rotation.z = 0.2;
-      const fBangR = fBangL.clone();
-      fBangR.position.x = 0.12;
+      const fBangR = new THREE.Mesh(SHARED_GEO.hairBangSide, hairMat);
+      fBangR.position.set(0.12, 0.16, 0.225);
       fBangR.rotation.z = -0.2;
       headGroup.add(crown, fBangL, fBangR);
+      const tieMat = new THREE.MeshStandardMaterial({ color: '#f43f5e', roughness: 0.55 });
       [-0.28, 0.28].forEach((bx) => {
-        const braid = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.42, 6, 8), hairMat);
-        braid.position.set(bx, -0.08, -0.14);
-        braid.rotation.z = bx < 0 ? 0.18 : -0.18;
-        headGroup.add(braid);
+        const tie = new THREE.Mesh(new THREE.TorusGeometry(0.068, 0.02, 6, 10), tieMat);
+        tie.position.set(bx, 0.08, -0.08);
+        headGroup.add(tie);
+        if (effectiveHair === 'twin_braids') {
+          for (let b = 0; b < 4; b++) {
+            const seg = new THREE.Mesh(SHARED_GEO.braidSeg, hairMat);
+            seg.scale.setScalar(0.92 - b * 0.09);
+            seg.position.set(bx + (bx < 0 ? -b * 0.015 : b * 0.015), -0.02 - b * 0.1, -0.12);
+            headGroup.add(seg);
+          }
+        } else {
+          const tail = new THREE.Mesh(SHARED_GEO.ponytailTail, hairMat);
+          tail.position.set(bx + (bx < 0 ? -0.04 : 0.04), -0.12, -0.12);
+          tail.rotation.z = bx < 0 ? 0.22 : -0.22;
+          headGroup.add(tail);
+        }
       });
     } else if (effectiveHair === 'whis_tall') {
-      const cap = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.2, 0.52, 4, 0.1), hairMat);
+      const cap = new THREE.Mesh(SHARED_GEO.hairCapShort, hairMat);
       cap.position.set(0, 0.2, -0.01);
-      const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 0.44, 12), hairMat);
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 0.44, 10), hairMat);
       tower.position.set(0, 0.44, -0.01);
-      const peak = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.26, 12), hairMat);
+      const peak = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.26, 10), hairMat);
       peak.position.set(0, 0.76, -0.02);
       peak.rotation.x = -0.15;
-      const sideL = new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.22, 0.26, 2, 0.03), hairMat);
+      const sideL = new THREE.Mesh(SHARED_GEO.hairSideShort, hairMat);
       sideL.position.set(-0.25, 0.06, -0.04);
-      const sideR = sideL.clone();
-      sideR.position.x = 0.25;
+      const sideR = new THREE.Mesh(SHARED_GEO.hairSideShort, hairMat);
+      sideR.position.set(0.25, 0.06, -0.04);
       headGroup.add(cap, tower, peak, sideL, sideR);
+    } else if (effectiveHair === 'ushnisha') {
+      const cap = new THREE.Mesh(SHARED_GEO.hairCapShort, hairMat);
+      cap.position.set(0, 0.2, -0.01);
+      const bun = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), hairMat);
+      bun.position.set(0, 0.36, -0.02);
+      headGroup.add(cap, bun);
+    } else if (effectiveHair === 'afro') {
+      const afro = new THREE.Mesh(new THREE.SphereGeometry(0.46, 14, 12), hairMat);
+      afro.position.set(0, 0.26, -0.04);
+      headGroup.add(afro);
     } else if (effectiveHair === 'hijab') {
-      const wrap = new THREE.Mesh(new RoundedBoxGeometry(0.58, 0.58, 0.56, 5, 0.18), hairMat);
+      // Hijab Segi Empat / Pashmina Rapi: wraps skull, chin fold, and drapes over shoulders/chest
+      const wrap = new THREE.Mesh(SHARED_GEO.hijabWrap, hairMat);
       wrap.position.set(0, 0.02, -0.03);
-      const drape = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.36, 0.28, 14), hairMat);
-      drape.position.set(0, -0.28, -0.02);
-      headGroup.add(wrap, drape);
+      const drape = new THREE.Mesh(SHARED_GEO.hijabDrape, hairMat);
+      drape.position.set(0, -0.3, -0.02);
+      const fold = new THREE.Mesh(SHARED_GEO.hijabFold, hairMat);
+      fold.position.set(0, 0.01, 0.05);
+      const pin = new THREE.Mesh(
+        SHARED_GEO.hijabPin,
+        new THREE.MeshStandardMaterial({ color: '#fde047', metalness: 0.85, roughness: 0.2 }),
+      );
+      pin.position.set(0, -0.24, 0.23);
+      headGroup.add(wrap, drape, fold, pin);
+    } else if (effectiveHair === 'hijab_sport') {
+      // Hijab Sport Pendaki: fitted athletic cap + snug neck cover + contrasting sport band
+      const cap = new THREE.Mesh(SHARED_GEO.hijabSportCap, hairMat);
+      cap.position.set(0, 0.02, -0.02);
+      const neck = new THREE.Mesh(SHARED_GEO.hijabSportNeck, hairMat);
+      neck.position.set(0, -0.26, -0.01);
+      const sportBand = new THREE.Mesh(
+        new THREE.TorusGeometry(0.26, 0.024, 6, 14, Math.PI * 1.15),
+        new THREE.MeshStandardMaterial({ color: '#38bdf8', roughness: 0.55 }),
+      );
+      sportBand.position.set(0, 0.06, 0.04);
+      headGroup.add(cap, neck, sportBand);
     }
   }
 
   // Costume-specific Headgear
   if (spec?.headGear) {
     const hg = spec.headGear;
-    if (hg === 'straw_hat' || hg === 'ace_hat' || hg === 'mihawk_hat') {
-      const hColor = hg === 'ace_hat' ? '#f97316' : hg === 'mihawk_hat' ? '#09090b' : '#facc15';
+    if (
+      hg === 'straw_hat' ||
+      hg === 'straw_hat_white' ||
+      hg === 'ace_hat' ||
+      hg === 'mihawk_hat' ||
+      hg === 'urahara_hat'
+    ) {
+      const hColor =
+        hg === 'ace_hat'
+          ? '#f97316'
+          : hg === 'mihawk_hat'
+            ? '#09090b'
+            : hg === 'straw_hat_white'
+              ? '#f8fafc'
+              : hg === 'urahara_hat'
+                ? '#15803d'
+                : '#facc15';
       const hatMat = new THREE.MeshStandardMaterial({ color: hColor, roughness: 0.78 });
       const brim = new THREE.Mesh(
         new THREE.CylinderGeometry(hg === 'mihawk_hat' ? 0.62 : 0.52, hg === 'mihawk_hat' ? 0.66 : 0.56, 0.04, 18),
@@ -2452,7 +4046,10 @@ export function buildR15AvatarMesh(
       dome.position.y = 0.33;
       const band = new THREE.Mesh(
         new THREE.CylinderGeometry(0.315, 0.315, 0.06, 16),
-        new THREE.MeshStandardMaterial({ color: hg === 'ace_hat' ? '#1e293b' : '#dc2626', roughness: 0.7 }),
+        new THREE.MeshStandardMaterial({
+          color: hg === 'ace_hat' ? '#1e293b' : hg === 'urahara_hat' ? '#f8fafc' : '#dc2626',
+          roughness: 0.7,
+        }),
       );
       band.position.y = 0.25;
       headGroup.add(brim, dome, band);
@@ -2465,6 +4062,35 @@ export function buildR15AvatarMesh(
         plume.rotation.z = -0.7;
         headGroup.add(plume);
       }
+    } else if (hg === 'sabo_hat') {
+      const topHatMat = new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.65 });
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 14), topHatMat);
+      brim.position.y = 0.22;
+      const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.28, 0.34, 14), topHatMat);
+      crown.position.y = 0.39;
+      const goggleMat = new THREE.MeshStandardMaterial({ color: '#38bdf8', metalness: 0.55, roughness: 0.2 });
+      [-0.09, 0.09].forEach((gx) => {
+        const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.04, 10), goggleMat);
+        lens.rotation.x = Math.PI / 2;
+        lens.position.set(gx, 0.29, 0.27);
+        headGroup.add(lens);
+      });
+      headGroup.add(brim, crown);
+    } else if (hg === 'chopper_hat') {
+      const pinkMat = new THREE.MeshStandardMaterial({ color: '#f472b6', roughness: 0.85 });
+      const blueMat = new THREE.MeshStandardMaterial({ color: '#38bdf8', roughness: 0.8 });
+      const dome = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.26, 0.54, 3, 0.1), pinkMat);
+      dome.position.set(0, 0.24, 0);
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.38, 0.08, 12), blueMat);
+      brim.position.set(0, 0.16, 0);
+      const antlerMat = new THREE.MeshStandardMaterial({ color: '#78350f', roughness: 0.7 });
+      [-0.28, 0.28].forEach((ax) => {
+        const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.24, 6), antlerMat);
+        ant.position.set(ax, 0.3, 0);
+        ant.rotation.z = ax < 0 ? 0.65 : -0.65;
+        headGroup.add(ant);
+      });
+      headGroup.add(dome, brim);
     } else if (hg === 'trafalgar_hat') {
       const fuzzMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.92 });
       const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 0.28, 16), fuzzMat);
@@ -2485,26 +4111,72 @@ export function buildR15AvatarMesh(
         horn.rotation.z = 0.45;
         headGroup.add(horn);
       }
-    } else if (hg === 'mahkota_wayang' || hg === 'crown_gold') {
+    } else if (hg === 'mahkota_wayang' || hg === 'crown_gold' || hg === 'brook_crown') {
       const goldMat = new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.8, roughness: 0.25 });
-      const baseCrown = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.24, 0.22, 8), goldMat);
-      baseCrown.position.y = 0.31;
+      const baseCrown = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.24, 0.2, 8), goldMat);
+      baseCrown.position.y = hg === 'brook_crown' ? 0.66 : 0.31;
       headGroup.add(baseCrown);
       if (hg === 'mahkota_wayang') {
         const peak = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.26, 6), goldMat);
         peak.position.set(0, 0.5, 0);
         headGroup.add(peak);
       }
-    } else if (hg === 'leaf_band' || hg === 'oil_band') {
-      const bandMat = new THREE.MeshStandardMaterial({ color: hg === 'oil_band' ? '#7f1d1d' : '#1e3a8a', roughness: 0.65 });
+    } else if (hg === 'scarlet_tiara') {
+      const scarletMat = new THREE.MeshStandardMaterial({ color: '#dc2626', metalness: 0.5, roughness: 0.3 });
+      const front = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.1, 0.04), scarletMat);
+      front.position.set(0, 0.16, 0.255);
+      [-0.14, 0.14].forEach((px) => {
+        const point = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.22, 4), scarletMat);
+        point.position.set(px, 0.27, 0.245);
+        point.rotation.z = px < 0 ? 0.2 : -0.2;
+        headGroup.add(point);
+      });
+      headGroup.add(front);
+    } else if (hg === 'shiki_wheel') {
+      const woodMat = new THREE.MeshStandardMaterial({ color: '#78350f', roughness: 0.72 });
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.032, 6, 14), woodMat);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 0.32;
+      headGroup.add(ring);
+    } else if (hg === 'wukong_band') {
+      const band = new THREE.Mesh(
+        new THREE.TorusGeometry(0.28, 0.03, 6, 18),
+        new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.85, roughness: 0.2 }),
+      );
+      band.rotation.x = Math.PI / 2;
+      band.position.set(0, 0.14, 0);
+      headGroup.add(band);
+    } else if (hg === 'doom_hood' || hg === 'akatsuki_hat' || hg === 'yhwach_helm') {
+      const hMat = new THREE.MeshStandardMaterial({
+        color: hg === 'doom_hood' ? '#15803d' : hg === 'akatsuki_hat' ? '#eab308' : '#09090b',
+        roughness: 0.75,
+      });
+      if (hg === 'akatsuki_hat') {
+        const kasa = new THREE.Mesh(new THREE.ConeGeometry(0.56, 0.28, 14), hMat);
+        kasa.position.set(0, 0.28, 0);
+        headGroup.add(kasa);
+      } else {
+        const hood = new THREE.Mesh(new RoundedBoxGeometry(0.6, 0.56, 0.56, 3, 0.16), hMat);
+        hood.position.set(0, 0.04, -0.05);
+        headGroup.add(hood);
+      }
+    } else if (hg === 'leaf_band' || hg === 'oil_band' || (hg as string) === 'towel_headband') {
+      const isBardockBand = (hg as string) === 'towel_headband';
+      const bandMat = new THREE.MeshStandardMaterial({
+        color: isBardockBand ? '#dc2626' : hg === 'oil_band' ? '#7f1d1d' : '#1e3a8a',
+        roughness: 0.65,
+      });
       const cloth = new THREE.Mesh(new RoundedBoxGeometry(0.55, 0.09, 0.53, 3, 0.03), bandMat);
       cloth.position.y = 0.16;
-      const plate = new THREE.Mesh(
-        new THREE.BoxGeometry(0.24, 0.07, 0.03),
-        new THREE.MeshStandardMaterial({ color: '#cbd5e1', metalness: 0.85, roughness: 0.2 }),
-      );
-      plate.position.set(0, 0.16, 0.265);
-      headGroup.add(cloth, plate);
+      headGroup.add(cloth);
+      if (!isBardockBand) {
+        const plate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.24, 0.07, 0.03),
+          new THREE.MeshStandardMaterial({ color: '#cbd5e1', metalness: 0.85, roughness: 0.2 }),
+        );
+        plate.position.set(0, 0.16, 0.265);
+        headGroup.add(plate);
+      }
     } else if (hg === 'wing_helm') {
       const wingMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', metalness: 0.5, roughness: 0.3 });
       [-0.28, 0.28].forEach((wx) => {
@@ -2524,13 +4196,24 @@ export function buildR15AvatarMesh(
       ring.rotation.x = Math.PI / 2;
       ring.position.y = 0.26;
       headGroup.add(ring);
-    } else if (hg === 'aokiji_glasses') {
+    } else if (hg === 'aokiji_glasses' || hg === 'usopp_goggles' || hg === 'visor') {
       const frame = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.07, 0.05),
-        new THREE.MeshStandardMaterial({ color: '#10b981', metalness: 0.6, roughness: 0.2 }),
+        new THREE.BoxGeometry(0.44, 0.08, 0.05),
+        new THREE.MeshStandardMaterial({
+          color: hg === 'aokiji_glasses' ? '#10b981' : hg === 'usopp_goggles' ? '#fbbf24' : '#0ea5e9',
+          metalness: 0.65,
+          roughness: 0.2,
+        }),
       );
-      frame.position.set(0, 0.19, 0.26);
+      frame.position.set(0, hg === 'visor' ? 0.05 : 0.19, 0.265);
       headGroup.add(frame);
+    } else if (hg === 'eyepatch_odin') {
+      const patch = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.1, 0.05),
+        new THREE.MeshStandardMaterial({ color: '#d97706', metalness: 0.75, roughness: 0.25 }),
+      );
+      patch.position.set(0.1, 0.04, 0.258);
+      headGroup.add(patch);
     } else if (hg === 'kenseikan') {
       const kMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.4 });
       [-0.08, 0.08].forEach((kx) => {
@@ -2559,9 +4242,11 @@ export function buildR15AvatarMesh(
       const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.02, 0.03), shadeMat);
       bridge.position.set(0, 0.035, 0.265);
       headGroup.add(bridge);
-    } else if (hg === 'beerus_ears') {
-      const outerEarMat = new THREE.MeshStandardMaterial({ color: '#a855f7', roughness: 0.55 });
-      const innerEarMat = new THREE.MeshStandardMaterial({ color: '#f472b6', roughness: 0.5 });
+    } else if (hg === 'beerus_ears' || hg === 'anubis_ears') {
+      const earHex = hg === 'anubis_ears' ? '#09090b' : '#a855f7';
+      const innerHex = hg === 'anubis_ears' ? '#fbbf24' : '#f472b6';
+      const outerEarMat = new THREE.MeshStandardMaterial({ color: earHex, roughness: 0.5 });
+      const innerEarMat = new THREE.MeshStandardMaterial({ color: innerHex, roughness: 0.45 });
       [-0.19, 0.19].forEach((ex) => {
         const ear = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.44, 6), outerEarMat);
         ear.position.set(ex, 0.4, 0.01);
@@ -2600,16 +4285,65 @@ export function buildR15AvatarMesh(
     upperTorso.add(halo);
   }
 
-  // Eyeglasses (when open face & enabled, +Z front)
-  if (cfg.glasses && (!fullMaskType || fullMaskType === 'kakashi')) {
-    const frameMat = new THREE.MeshStandardMaterial({ color: '#09090b', metalness: 0.72, roughness: 0.2 });
-    const lensMat = new THREE.MeshStandardMaterial({ color: '#111827', metalness: 0.9, roughness: 0.12 });
-    [-0.1, 0.1].forEach((gx) => {
-      const lens = new THREE.Mesh(new RoundedBoxGeometry(0.14, 0.09, 0.04, 2, 0.015), lensMat);
-      lens.position.set(gx, 0.03, 0.265);
-      headGroup.add(lens);
+  // Mythological Shoulder Ravens (Odin), Dharma Lotus Halo (Buddha), Wind-Fire Wheels (Nezha)
+  if (spec?.shoulderRavens) {
+    const ravenMat = new THREE.MeshStandardMaterial({ color: '#09090b', roughness: 0.5 });
+    [-0.44, 0.44].forEach((rx) => {
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 6), ravenMat);
+      body.scale.set(0.9, 1.15, 1.25);
+      body.position.set(rx, 0.72, -0.02);
+      const beak = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 4), new THREE.MeshStandardMaterial({ color: '#fbbf24' }));
+      beak.rotation.x = Math.PI / 2;
+      beak.position.set(rx, 0.76, 0.1);
+      upperTorso.add(body, beak);
     });
-    const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.025, 0.03), frameMat);
+  }
+  if (spec?.lotusHalo) {
+    const dharmaMat = new THREE.MeshBasicMaterial({ color: '#fde047', transparent: true, opacity: 0.82 });
+    const outerWheel = new THREE.Mesh(new THREE.TorusGeometry(0.74, 0.04, 8, 24), dharmaMat);
+    outerWheel.position.set(0, 0.68, -0.32);
+    const innerWheel = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.025, 6, 18), dharmaMat);
+    innerWheel.position.set(0, 0.68, -0.32);
+    upperTorso.add(outerWheel, innerWheel);
+  }
+  if (spec?.fireWheels) {
+    const wheelMat = new THREE.MeshBasicMaterial({ color: '#f97316' });
+    [-0.28, 0.28].forEach((wx) => {
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.032, 6, 14), wheelMat);
+      wheel.rotation.y = Math.PI / 2;
+      wheel.position.set(wx, -0.82, 0.04);
+      lowerTorso.add(wheel);
+    });
+  }
+
+  // Eyeglasses (when open face & enabled, +Z front — round wire for female, sporty angular for male)
+  if (cfg.glasses && (!fullMaskType || fullMaskType === 'kakashi')) {
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: isFemale ? '#d97706' : '#09090b',
+      metalness: 0.75,
+      roughness: 0.2,
+    });
+    const lensMat = new THREE.MeshStandardMaterial({
+      color: isFemale ? '#bae6fd' : '#111827',
+      transparent: isFemale,
+      opacity: isFemale ? 0.55 : 1,
+      metalness: isFemale ? 0.35 : 0.9,
+      roughness: 0.12,
+    });
+    [-0.1, 0.1].forEach((gx) => {
+      if (isFemale) {
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(0.064, 0.012, 6, 14), frameMat);
+        rim.position.set(gx, 0.03, 0.266);
+        const lens = new THREE.Mesh(new THREE.CircleGeometry(0.06, 12), lensMat);
+        lens.position.set(gx, 0.03, 0.264);
+        headGroup.add(rim, lens);
+      } else {
+        const lens = new THREE.Mesh(new RoundedBoxGeometry(0.145, 0.085, 0.038, 2, 0.015), lensMat);
+        lens.position.set(gx, 0.03, 0.265);
+        headGroup.add(lens);
+      }
+    });
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.022, 0.028), frameMat);
     bridge.position.set(0, 0.04, 0.265);
     headGroup.add(bridge);
   }
@@ -2621,48 +4355,48 @@ export function buildR15AvatarMesh(
 
   if (hat === 'rimba') {
     const brim = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.5, 0.54, 0.055, 18),
+      new THREE.CylinderGeometry(0.5, 0.54, 0.055, 14),
       new THREE.MeshStandardMaterial({ color: '#4d7c0f', roughness: 0.85 }),
     );
     brim.position.y = 0.21;
     const crown = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.28, 0.33, 0.22, 16),
+      new THREE.CylinderGeometry(0.28, 0.33, 0.22, 12),
       new THREE.MeshStandardMaterial({ color: '#3f6212', roughness: 0.85 }),
     );
     crown.position.y = 0.32;
     headGroup.add(brim, crown);
   } else if (hat === 'baseball') {
     const capMat = new THREE.MeshStandardMaterial({ color: '#2563eb', roughness: 0.65 });
-    const dome = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.22, 0.52, 4, 0.12), capMat);
+    const dome = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.22, 0.52, 3, 0.12), capMat);
     dome.position.set(0, 0.22, -0.01);
-    const visor = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.045, 0.3, 3, 0.02), capMat);
+    const visor = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.045, 0.3, 2, 0.02), capMat);
     visor.position.set(0, 0.14, 0.32);
     visor.rotation.x = -0.1;
     headGroup.add(dome, visor);
   } else if (hat === 'beanie') {
     const knitMat = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.92 });
-    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.3, 0.12, 16), knitMat);
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.3, 0.12, 12), knitMat);
     cuff.position.y = 0.16;
     const dome = new THREE.Mesh(new SphereBeanieCapGeo(), knitMat);
     dome.position.y = 0.19;
     const pom = new THREE.Mesh(
-      new THREE.SphereGeometry(0.095, 10, 8),
+      new THREE.SphereGeometry(0.095, 8, 6),
       new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.95 }),
     );
     pom.position.y = 0.48;
     headGroup.add(cuff, dome, pom);
   } else if (hat === 'towel_headband') {
     const towelMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.95 });
-    const band = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.1, 0.54, 3, 0.04), towelMat);
+    const band = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.1, 0.54, 2, 0.04), towelMat);
     band.position.y = 0.15;
     headGroup.add(band);
-    const neckTowel = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.065, 8, 18), towelMat);
+    const neckTowel = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.065, 6, 14), towelMat);
     neckTowel.rotation.x = Math.PI / 2;
     neckTowel.position.set(0, 0.64, -0.02);
     upperTorso.add(neckTowel);
   } else if (hat === 'bando') {
     const bandoMat = new THREE.MeshStandardMaterial({ color: '#ec4899', roughness: 0.55 });
-    const band = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.032, 8, 20, Math.PI * 1.1), bandoMat);
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.032, 6, 16, Math.PI * 1.1), bandoMat);
     band.position.set(0, 0.13, 0.02);
     const bowL = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.12, 4), bandoMat);
     bowL.rotation.z = Math.PI / 2;
@@ -2671,9 +4405,20 @@ export function buildR15AvatarMesh(
     bowR.rotation.z = -Math.PI / 2;
     bowR.position.x = 0.07;
     headGroup.add(band, bowL, bowR);
+  } else if (hat === 'hairpin') {
+    const pinMat = new THREE.MeshStandardMaterial({ color: '#f43f5e', roughness: 0.35 });
+    const clipMat = new THREE.MeshStandardMaterial({ color: '#fde047', metalness: 0.75, roughness: 0.25 });
+    [-0.17, 0.17].forEach((px) => {
+      const bar = new THREE.Mesh(SHARED_GEO.hairpinBar, clipMat);
+      bar.position.set(px, 0.17, 0.255);
+      bar.rotation.z = px < 0 ? 0.25 : -0.25;
+      const bow = new THREE.Mesh(SHARED_GEO.hairpinBow, pinMat);
+      bow.position.set(px + (px < 0 ? -0.04 : 0.04), 0.18, 0.268);
+      headGroup.add(bar, bow);
+    });
   } else if (hat === 'headlamp' || cfg.headAccessory === 'headlamp') {
     const strap = new THREE.Mesh(
-      new RoundedBoxGeometry(0.56, 0.075, 0.54, 3, 0.03),
+      new RoundedBoxGeometry(0.56, 0.075, 0.54, 2, 0.03),
       new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.8 }),
     );
     strap.position.y = 0.16;
@@ -2687,7 +4432,7 @@ export function buildR15AvatarMesh(
       emissive: '#fde047',
       emissiveIntensity: 1.5,
     });
-    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.04, 12), headlampBulbMat);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.04, 10), headlampBulbMat);
     lens.rotation.x = Math.PI / 2;
     lens.position.set(0, 0.16, 0.33);
     headGroup.add(strap, housing, lens);
@@ -2702,14 +4447,14 @@ export function buildR15AvatarMesh(
     }
   } else if (hat === 'peci') {
     const peciMat = new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.94 });
-    const peci = new THREE.Mesh(new RoundedBoxGeometry(0.52, 0.24, 0.52, 3, 0.05), peciMat);
+    const peci = new THREE.Mesh(new RoundedBoxGeometry(0.52, 0.24, 0.52, 2, 0.05), peciMat);
     peci.position.set(0, 0.26, 0);
     headGroup.add(peci);
   } else if (hat === 'blangkon') {
     const batikMat = new THREE.MeshStandardMaterial({ map: getBatikTexture(), roughness: 0.72 });
-    const cap = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.22, 0.54, 4, 0.1), batikMat);
+    const cap = new THREE.Mesh(new RoundedBoxGeometry(0.54, 0.22, 0.54, 3, 0.1), batikMat);
     cap.position.set(0, 0.22, -0.01);
-    const mondolan = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 10), batikMat);
+    const mondolan = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), batikMat);
     mondolan.position.set(0, 0.13, -0.29);
     headGroup.add(cap, mondolan);
   }
@@ -2737,8 +4482,20 @@ export function buildR15AvatarMesh(
     hand.position.set(0, -0.3, 0);
     const palmMesh = new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.16, 0.17, 3, 0.05), handMat);
     palmMesh.position.y = -0.06;
+    if (spec?.giantHands) {
+      palmMesh.scale.set(1.65, 1.45, 1.65);
+    }
     palmMesh.castShadow = castShadow;
     hand.add(palmMesh);
+
+    if (spec?.wolverineClaws) {
+      const clawMat = new THREE.MeshStandardMaterial({ color: '#e2e8f0', metalness: 0.92, roughness: 0.15 });
+      [-0.045, 0, 0.045].forEach((cx) => {
+        const claw = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.032, 0.34), clawMat);
+        claw.position.set(cx, -0.08, 0.2);
+        hand.add(claw);
+      });
+    }
 
     if (suit === 'ironman') {
       const repulsor = new THREE.Mesh(
@@ -2760,6 +4517,37 @@ export function buildR15AvatarMesh(
   if (spec?.missingLeftArm) {
     leftArmSet.lower.visible = false;
     leftArmSet.hand.visible = false;
+  }
+
+  // Extra 4-Arm Mythological / Sukuna Heian Pair
+  if (spec?.extraArms) {
+    [-1, 1].forEach((side) => {
+      const exArm = new THREE.Group();
+      exArm.position.set(side * (shoulderX + 0.04), 0.3, -0.12);
+      exArm.rotation.z = side * 0.48;
+      exArm.rotation.x = -0.35;
+      const exMesh = new THREE.Mesh(new RoundedBoxGeometry(0.18, 0.54, 0.18, 2, 0.05), skinMat);
+      exMesh.position.y = -0.22;
+      const exHand = new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.15, 0.16, 2, 0.04), handMat);
+      exHand.position.y = -0.52;
+      exArm.add(exMesh, exHand);
+      upperTorso.add(exArm);
+    });
+  }
+
+  // Sport Smartwatch on left wrist (Male accessory)
+  if (!spec && cfg.wristAccessory === 'watch') {
+    const watchBand = new THREE.Mesh(
+      SHARED_GEO.watchBand,
+      new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.6 }),
+    );
+    watchBand.position.set(0, -0.24, 0);
+    const watchDial = new THREE.Mesh(
+      SHARED_GEO.watchDial,
+      new THREE.MeshStandardMaterial({ color: '#38bdf8', emissive: '#0284c7', emissiveIntensity: 0.35 }),
+    );
+    watchDial.position.set(0, -0.24, 0.11);
+    leftArmSet.lower.add(watchBand, watchDial);
   }
 
   // Costume Weapons attached to Hands / Back
@@ -2787,27 +4575,83 @@ export function buildR15AvatarMesh(
         leftArmSet.hand.add(inner);
       }
       leftArmSet.hand.add(shield);
-    } else if (wp === 'mjolnir') {
-      const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.36, 8), darkGripMat);
+    } else if (wp === 'mjolnir' || wp === 'stormbreaker' || wp === 'ragnir_hammer' || wp === 'nobara_hammer') {
+      const len = wp === 'ragnir_hammer' ? 0.95 : wp === 'stormbreaker' ? 0.68 : 0.38;
+      const handle = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.032, 0.032, len, 8),
+        new THREE.MeshStandardMaterial({ color: '#78350f', roughness: 0.75 }),
+      );
       handle.rotation.x = Math.PI / 2;
-      handle.position.set(0, -0.06, 0.14);
-      const head = new THREE.Mesh(new RoundedBoxGeometry(0.22, 0.2, 0.34, 2, 0.03), metalBladeMat);
-      head.position.set(0, -0.06, 0.32);
+      handle.position.set(0, -0.06, len * 0.45);
+      const headSize = wp === 'ragnir_hammer' ? [0.34, 0.28, 0.44] : wp === 'nobara_hammer' ? [0.16, 0.14, 0.24] : [0.24, 0.22, 0.36];
+      const head = new THREE.Mesh(
+        new RoundedBoxGeometry(headSize[0], headSize[1], headSize[2], 2, 0.03),
+        wp === 'nobara_hammer' ? new THREE.MeshStandardMaterial({ color: '#a16207', roughness: 0.65 }) : metalBladeMat,
+      );
+      head.position.set(0, -0.06, len * 0.9);
       rightArmSet.hand.add(handle, head);
-    } else if (wp === 'trident' || wp === 'spear' || wp === 'staff' || wp === 'clima_tact') {
+    } else if (
+      wp === 'trident' ||
+      wp === 'bident' ||
+      wp === 'spear' ||
+      wp === 'gungnir' ||
+      wp === 'three_point_spear' ||
+      wp === 'staff' ||
+      wp === 'clima_tact' ||
+      wp === 'ruyi_staff'
+    ) {
       const staffColor =
-        wp === 'trident' ? goldMat : wp === 'clima_tact' ? new THREE.MeshStandardMaterial({ color: '#38bdf8', metalness: 0.45 }) : new THREE.MeshStandardMaterial({ color: '#78350f', roughness: 0.7 });
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 1.85, 8), staffColor);
+        wp === 'trident' || wp === 'gungnir' || wp === 'three_point_spear'
+          ? goldMat
+          : wp === 'clima_tact'
+            ? new THREE.MeshStandardMaterial({ color: '#38bdf8', metalness: 0.45 })
+            : wp === 'ruyi_staff'
+              ? new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.45 })
+              : wp === 'bident'
+                ? darkGripMat
+                : new THREE.MeshStandardMaterial({ color: '#78350f', roughness: 0.7 });
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 1.88, 8), staffColor);
       shaft.position.set(0, 0.25, 0.12);
       rightArmSet.hand.add(shaft);
-      if (wp === 'trident') {
+      if (wp === 'trident' || wp === 'three_point_spear') {
         [-0.1, 0, 0.1].forEach((tx) => {
-          const prong = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.22, 6), goldMat);
-          prong.position.set(tx, 1.24, 0.12);
+          const prong = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.24, 6), goldMat);
+          prong.position.set(tx, 1.26, 0.12);
           rightArmSet.hand.add(prong);
         });
+      } else if (wp === 'bident') {
+        [-0.08, 0.08].forEach((tx) => {
+          const prong = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.26, 6), darkGripMat);
+          prong.position.set(tx, 1.26, 0.12);
+          rightArmSet.hand.add(prong);
+        });
+      } else if (wp === 'gungnir') {
+        const spearHead = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.34, 4), goldMat);
+        spearHead.position.set(0, 1.28, 0.12);
+        rightArmSet.hand.add(spearHead);
+      } else if (wp === 'ruyi_staff') {
+        [-0.65, 1.15].forEach((ry) => {
+          const band = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 0.18, 8), goldMat);
+          band.position.set(0, ry, 0.12);
+          rightArmSet.hand.add(band);
+        });
       }
-    } else if (wp === 'sword' || wp === 'katana_3' || wp === 'sode_shirayuki' || wp === 'ryujin_jakka') {
+    } else if (wp === 'ankh') {
+      const loop = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 6, 14), goldMat);
+      loop.position.set(0, 0.2, 0.14);
+      const crossV = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.34, 8), goldMat);
+      crossV.position.set(0, -0.05, 0.14);
+      const crossH = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.26, 8), goldMat);
+      crossH.rotation.z = Math.PI / 2;
+      crossH.position.set(0, 0.06, 0.14);
+      rightArmSet.hand.add(loop, crossV, crossH);
+    } else if (
+      wp === 'sword' ||
+      wp === 'dual_swords' ||
+      wp === 'katana_3' ||
+      wp === 'sode_shirayuki' ||
+      wp === 'ryujin_jakka'
+    ) {
       const bladeMat =
         wp === 'sode_shirayuki'
           ? new THREE.MeshStandardMaterial({ color: '#f8fafc', emissive: '#bae6fd', emissiveIntensity: 0.45 })
@@ -2824,14 +4668,35 @@ export function buildR15AvatarMesh(
       const guard = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.03), goldMat);
       guard.position.set(0, -0.06, 0.12);
       rightArmSet.hand.add(blade, guard);
-      if (wp === 'katana_3') {
+      if (wp === 'katana_3' || wp === 'dual_swords') {
         const blade2 = blade.clone();
-        leftArmSet.hand.add(blade2);
-        const hipSword = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.0, 6), darkGripMat);
-        hipSword.rotation.x = Math.PI / 2;
-        hipSword.position.set(-0.36, 0.14, -0.12);
-        lowerTorso.add(hipSword);
+        const guard2 = guard.clone();
+        leftArmSet.hand.add(blade2, guard2);
+        if (wp === 'katana_3') {
+          const hipSword = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.0, 6), darkGripMat);
+          hipSword.rotation.x = Math.PI / 2;
+          hipSword.position.set(-0.36, 0.14, -0.12);
+          lowerTorso.add(hipSword);
+        }
       }
+    } else if (wp === 'scythe') {
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 1.8, 8), darkGripMat);
+      shaft.position.set(0, 0.25, 0.14);
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.09, 0.03), metalBladeMat);
+      blade.position.set(-0.24, 1.08, 0.14);
+      blade.rotation.z = 0.28;
+      rightArmSet.hand.add(shaft, blade);
+    } else if (wp === 'slingshot') {
+      const slMat = new THREE.MeshStandardMaterial({ color: '#16a34a', roughness: 0.6 });
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.45, 8), slMat);
+      stem.position.set(0, 0.08, 0.14);
+      [-0.14, 0.14].forEach((fx) => {
+        const fork = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.35, 6), slMat);
+        fork.position.set(fx, 0.38, 0.14);
+        fork.rotation.z = fx < 0 ? 0.35 : -0.35;
+        rightArmSet.hand.add(fork);
+      });
+      rightArmSet.hand.add(stem);
     } else if (wp === 'yoru') {
       // Mihawk giant black greatsword strapped across back (-Z)
       const yoruBlade = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.95, 0.04), darkGripMat);
@@ -2842,7 +4707,6 @@ export function buildR15AvatarMesh(
       crossGuard.position.set(-0.26, 0.94, -0.25);
       upperTorso.add(yoruBlade, crossGuard);
     } else if (wp === 'gunbai') {
-      // Madara / Obito war fan
       const fanDisk = new THREE.Mesh(
         new THREE.CylinderGeometry(0.32, 0.26, 0.05, 14),
         new THREE.MeshStandardMaterial({ color: '#991b1b', roughness: 0.5 }),
@@ -2866,14 +4730,22 @@ export function buildR15AvatarMesh(
       bolt.scale.set(0.45, 2.2, 0.45);
       bolt.position.set(0, 0.05, 0.14);
       rightArmSet.hand.add(bolt);
-    } else if (wp === 'fire_orb' || wp === 'rasengan') {
-      const orbColor = wp === 'fire_orb' ? '#f97316' : '#38bdf8';
-      const orb = new THREE.Mesh(
-        new THREE.SphereGeometry(0.16, 12, 10),
-        new THREE.MeshBasicMaterial({ color: orbColor, transparent: true, opacity: 0.85 }),
-      );
-      orb.position.set(0, -0.16, 0.12);
-      rightArmSet.hand.add(orb);
+    } else if (wp === 'fire_orb' || wp === 'rasengan' || wp === 'chaos_orbs') {
+      const orbColor = wp === 'chaos_orbs' ? '#ef4444' : wp === 'fire_orb' ? '#f97316' : '#38bdf8';
+      const orbMat = new THREE.MeshBasicMaterial({ color: orbColor, transparent: true, opacity: 0.85 });
+      const orbR = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), orbMat);
+      orbR.position.set(0, -0.16, 0.12);
+      rightArmSet.hand.add(orbR);
+      if (wp === 'chaos_orbs') {
+        const orbL = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), orbMat);
+        orbL.position.set(0, -0.16, 0.12);
+        leftArmSet.hand.add(orbL);
+      }
+    } else if (wp === 'magic_mandala') {
+      const mandMat = new THREE.MeshBasicMaterial({ color: '#fbbf24', wireframe: true });
+      const disk = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.28, 12), mandMat);
+      disk.position.set(0, -0.06, 0.24);
+      rightArmSet.hand.add(disk);
     } else if (wp === 'kurta_chains') {
       const chainMat = new THREE.MeshStandardMaterial({ color: '#cbd5e1', metalness: 0.85, roughness: 0.25 });
       for (let c = 0; c < 4; c++) {
@@ -2995,6 +4867,17 @@ export function buildR15AvatarMesh(
       topStrap.position.set(sx, 0.635, -0.04);
       upperTorso.add(frontStrap, topStrap);
     });
+  } else if (effectiveBackGear === 'sling') {
+    const strapMat = new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.8 });
+    const slingMat = new THREE.MeshStandardMaterial({ color: cfg.pack, roughness: 0.65 });
+    const strap = new THREE.Mesh(SHARED_GEO.slingStrap, strapMat);
+    strap.rotation.z = -0.62;
+    strap.position.set(0, 0.34, 0);
+    const bag = new THREE.Mesh(SHARED_GEO.slingBag, slingMat);
+    bag.position.set(0.14, 0.24, -0.26);
+    bag.rotation.z = -0.22;
+    bag.castShadow = castShadow;
+    upperTorso.add(strap, bag);
   } else if (effectiveBackGear === 'cape') {
     const capeColor = spec?.capeColor || '#dc2626';
     const capeMat = new THREE.MeshStandardMaterial({
@@ -3060,6 +4943,77 @@ export function buildR15AvatarMesh(
       upperTorso.add(tank, cap, nozzle, flame);
       jetFlames?.push(flame);
     });
+  }
+
+  // Spec Back Wings (Dragon Nidhogg / Devil Imu / Angel / Iron Spider / Butterflies)
+  if (spec?.backWings && spec.backWings !== 'none') {
+    const bw = spec.backWings;
+    if (bw === 'dragon_dark' || bw === 'demon_dark') {
+      const wMat = new THREE.MeshStandardMaterial({
+        color: bw === 'dragon_dark' ? '#1e1b4b' : '#450a0a',
+        emissive: bw === 'dragon_dark' ? '#312e81' : '#7f1d1d',
+        emissiveIntensity: 0.3,
+        roughness: 0.5,
+      });
+      [-1, 1].forEach((side) => {
+        const wing = new THREE.Group();
+        wing.position.set(side * 0.18, 0.5, -0.24);
+        wing.rotation.y = side * 0.45;
+        const mainSpan = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.52, 0.04), wMat);
+        mainSpan.position.set(side * 0.48, 0.18, -0.05);
+        mainSpan.rotation.z = side * 0.32;
+        const hornTip = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.42, 4), wMat);
+        hornTip.position.set(side * 0.96, 0.44, -0.05);
+        hornTip.rotation.z = side * -0.4;
+        wing.add(mainSpan, hornTip);
+        upperTorso.add(wing);
+      });
+    } else if (bw === 'angel_white') {
+      const wingMat = new THREE.MeshStandardMaterial({
+        color: '#f8fafc',
+        emissive: '#e2e8f0',
+        emissiveIntensity: 0.22,
+        roughness: 0.45,
+      });
+      [-1, 1].forEach((side) => {
+        const wing = new THREE.Group();
+        wing.position.set(side * 0.14, 0.48, -0.22);
+        wing.rotation.y = side * 0.4;
+        for (let f = 0; f < 3; f++) {
+          const feather = new THREE.Mesh(
+            new RoundedBoxGeometry(0.76 - f * 0.14, 0.18, 0.06, 2, 0.03),
+            wingMat,
+          );
+          feather.position.set(side * (0.44 - f * 0.06), 0.18 - f * 0.2, -0.06);
+          feather.rotation.z = side * (0.28 - f * 0.2);
+          wing.add(feather);
+        }
+        upperTorso.add(wing);
+      });
+    } else if (bw === 'iron_spider') {
+      const goldMat = new THREE.MeshStandardMaterial({ color: '#fbbf24', metalness: 0.85, roughness: 0.2 });
+      const redMat = new THREE.MeshStandardMaterial({ color: '#dc2626', metalness: 0.7, roughness: 0.25 });
+      [
+        [-1, 1],
+        [1, 1],
+        [-1, -1],
+        [1, -1],
+      ].forEach(([sx, sy]) => {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.02, 0.92, 6), sx > 0 ? goldMat : redMat);
+        leg.position.set(sx * 0.42, 0.52 + sy * 0.26, -0.28);
+        leg.rotation.z = sx * (sy > 0 ? -0.65 : -1.1);
+        upperTorso.add(leg);
+      });
+    } else if (bw === 'butterflies') {
+      const bfMat = new THREE.MeshBasicMaterial({ color: '#a855f7', transparent: true, opacity: 0.78 });
+      [-1, 1].forEach((side) => {
+        const topW = new THREE.Mesh(new THREE.CircleGeometry(0.32, 10), bfMat);
+        topW.position.set(side * 0.34, 0.52, -0.26);
+        const botW = new THREE.Mesh(new THREE.CircleGeometry(0.22, 10), bfMat);
+        botW.position.set(side * 0.28, 0.16, -0.26);
+        upperTorso.add(topW, botW);
+      });
+    }
   }
 
   // Orbiting Elemental Aura Particles (for Mythological Gods, Flash, Thor, Anime characters)
@@ -3287,22 +5241,22 @@ export function animateR15AvatarPose(
     return;
   }
 
-  // Articulated Walking / Uphill Running Cycle (+Z forward)
+  // Articulated Walking / Uphill Running Cycle (+Z forward) — grounded Roblox Expedition cadence
   if (poseState === 'walk' || isMoving) {
     const s = Math.sin(walkPhase);
     const c = Math.cos(walkPhase);
-    rig.lowerTorso.position.y = 1.02 + Math.abs(c) * 0.055;
-    rig.lowerTorso.rotation.y = s * 0.09;
-    rig.upperTorso.rotation.x = 0.1;
-    rig.upperTorso.rotation.y = -s * 0.1;
-    rig.leftUpperLeg.rotation.x = s * 0.62;
-    rig.leftLowerLeg.rotation.x = Math.max(0.08, -s * 0.68 + 0.24);
-    rig.rightUpperLeg.rotation.x = -s * 0.62;
-    rig.rightLowerLeg.rotation.x = Math.max(0.08, s * 0.68 + 0.24);
-    rig.leftUpperArm.rotation.x = -s * 0.56;
-    rig.leftLowerArm.rotation.x = -0.42 - Math.max(0, s) * 0.35;
-    rig.rightUpperArm.rotation.x = s * 0.56;
-    rig.rightLowerArm.rotation.x = -0.42 - Math.max(0, -s) * 0.35;
+    rig.lowerTorso.position.y = 1.02 + Math.abs(c) * 0.04;
+    rig.lowerTorso.rotation.y = s * 0.075;
+    rig.upperTorso.rotation.x = 0.08;
+    rig.upperTorso.rotation.y = -s * 0.085;
+    rig.leftUpperLeg.rotation.x = s * 0.54;
+    rig.leftLowerLeg.rotation.x = Math.max(0.06, -s * 0.58 + 0.2);
+    rig.rightUpperLeg.rotation.x = -s * 0.54;
+    rig.rightLowerLeg.rotation.x = Math.max(0.06, s * 0.58 + 0.2);
+    rig.leftUpperArm.rotation.x = -s * 0.48;
+    rig.leftLowerArm.rotation.x = -0.36 - Math.max(0, s) * 0.28;
+    rig.rightUpperArm.rotation.x = s * 0.48;
+    rig.rightLowerArm.rotation.x = -0.36 - Math.max(0, -s) * 0.28;
     return;
   }
 

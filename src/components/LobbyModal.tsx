@@ -408,23 +408,24 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                 </div>
                 <div>
                   <label htmlFor="init-quiz-duration" className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Durasi Kuis per CP (15–45 dtk)
+                    Durasi Kuis per CP (5–60 dtk)
                   </label>
-                  <input
+                  <select
                     id="init-quiz-duration"
-                    type="number"
-                    min={15}
-                    max={45}
                     value={initQuizDuration}
-                    onChange={(e) =>
-                      onChangeInitQuizDuration(Math.min(45, Math.max(15, Number(e.target.value) || 30)))
-                    }
-                    className="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-white/15 text-sm font-mono-num text-white focus:outline-none focus:border-amber-400 select-text"
-                  />
+                    onChange={(e) => onChangeInitQuizDuration(Number(e.target.value))}
+                    className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-white/15 text-sm font-mono-num text-white focus:outline-none focus:border-amber-400"
+                  >
+                    {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((s) => (
+                      <option key={s} value={s}>
+                        {s} Detik
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label htmlFor="init-explain-duration" className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Durasi Pembahasan (40–60 dtk)
+                    Durasi Pembahasan (5–60 dtk)
                   </label>
                   <select
                     id="init-explain-duration"
@@ -432,7 +433,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                     onChange={(e) => onChangeInitExplanationDuration(Number(e.target.value))}
                     className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-white/15 text-sm font-mono-num text-sky-300 focus:outline-none focus:border-amber-400"
                   >
-                    {[40, 50, 60].map((s) => (
+                    {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((s) => (
                       <option key={s} value={s}>
                         {s} Detik
                       </option>

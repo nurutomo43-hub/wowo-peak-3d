@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { CheckCircle2, Pause } from 'lucide-react';
-import { MountainWorld, CP_POINTS, SUMMIT_EXAM_POINT } from './game/MountainWorld';
+import { MountainWorld, CP_POINTS, SUMMIT_EXAM_POINT, getMapLayout } from './game/MountainWorld';
 import { SoundEngine } from './game/SoundEngine';
 import {
   DEFAULT_ESSAY_QUESTIONS,
@@ -59,6 +59,7 @@ import {
   DEFAULT_TEACHER_AVATAR,
   DIFFICULTY_LEVELS,
   EMOTE_ITEMS,
+  MAP_THEMES,
   type AnswerRecord,
   type AvatarConfig,
   type DisasterEventType,
@@ -67,6 +68,8 @@ import {
   type EssayQuestion,
   type ExportStudentRow,
   type HudSnapshot,
+  type MapSelectionChoice,
+  type MapThemeId,
   type ParticipantSummary,
   type PublicRoomState,
   type QuizQuestion,
@@ -133,6 +136,8 @@ export function App() {
     score: number;
   } | null>(null);
   const joinedAtRef = useRef<number>(Date.now());
+  const studentStartedAtRef = useRef<number>(Date.now());
+  const sessionDurationMinRef = useRef<number>(20);
   const isChannelSubscribedRef = useRef(false);
   const pendingProgressSyncRef = useRef(false);
   const roomPersistTimerRef = useRef<number | null>(null);
@@ -143,6 +148,7 @@ export function App() {
   const intentionalDisconnectRef = useRef(false);
   const reconnectTimerRef = useRef<number | null>(null);
   const heartbeatTimerRef = useRef<number | null>(null);
+  const nextShiftStudentIdRef = useRef<string>('');
 
   // Lobby & session UI state
   const [role, setRole] = useState<Role>('student');
@@ -155,6 +161,7 @@ export function App() {
   const [initQuizDuration, setInitQuizDuration] = useState(30);
   const [initSessionDuration, setInitSessionDuration] = useState(20);
   const [initExplanationDuration, setInitExplanationDuration] = useState(45);
+  const [initSelectedMap, setInitSelectedMap] = useState<MapSelectionChoice>('nusantara');
   const [customQuestions, setCustomQuestions] = useState<QuizQuestion[] | null>(
     () => loadCustomPgFromStorage()?.questions ?? null,
   );
@@ -190,6 +197,7 @@ export function App() {
   const [settings, setSettings] = useState<RoomSettings>({
     timeOfDay: 'pagi',
     weather: 'cerah',
+    selectedMap: 'nusantara',
     quizDuration: 30,
     difficultyLevel: 3,
     respawnMode: 'last_cp',
@@ -198,6 +206,9 @@ export function App() {
     sessionDurationMinutes: 20,
     explanationDurationSec: 45,
   });
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const [teacherFlyMode, setTeacherFlyMode] = useState(false);
   const [questionCount, setQuestionCount] = useState(
     () => loadCustomPgFromStorage()?.questions.length ?? 25,
   );
@@ -214,6 +225,8 @@ export function App() {
   const [lowGraphics, setLowGraphics] = useState(false);
   const [warningText, setWarningText] = useState('');
   const [lightningOpacity, setLightningOpacity] = useState(0);
+  const [frostActive, setFrostActive] = useState(false);
+  const frostActiveRef = useRef(false);
   const [activeQuiz, setActiveQuiz] = useState<ActiveQuizState | null>(null);
   const [activeEssayModal, setActiveEssayModal] = useState<{
     questions: EssayQuestion[];
@@ -232,6 +245,11 @@ export function App() {
   const [leaderboard, setLeaderboard] = useState<ParticipantSummary[]>([]);
   const [exportRows, setExportRows] = useState<ExportStudentRow[]>([]);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [spectatingTargetName, setSpectatingTargetName] = useState<string | null>(null);
+  const spectatingIdRef = useRef<string | null>(null);
+  const [photoMode, setPhotoMode] = useState(false);
+  const [photoSelfie, setPhotoSelfie] = useState(false);
+  const [capturedPhotoUrl, setCapturedPhotoUrl] = useState<string | null>(null);
   const [hud, setHud] = useState<HudSnapshot>({
     altitudePct: 0,
     nextCpIndex: 1,
@@ -289,6 +307,7 @@ export function App() {
     chillSlowTimer: 0,
     lastChillWarnAt: 0,
     lastGateWarnAt: 0,
+    bridgeAttemptMode: 'none' as 'none' | 'challenge' | 'safe',
     activeEmote: null as EmoteType | null,
     emoteTimer: 0,
     playerMesh: null as THREE.Group | null,
@@ -308,6 +327,10 @@ export function App() {
     lastHudSync: 0,
     lastQuizUiSync: 0,
     lastEssayUiSync: 0,
+    flyMode: false,
+    flyVerticalDir: 0 as -1 | 0 | 1,
+    photoMode: false,
+    photoPreviewOpen: false,
   });
 
   const warnTimerRef = useRef<number | null>(null);
@@ -394,6 +417,8 @@ export function App() {
       fallCount: g.fallCount,
       answers: g.answers,
       essayAnswers: g.essayAnswers,
+      studentStartedAt: studentStartedAtRef.current,
+      remainingSec: Math.max(0, Math.round(remainingSecRef.current)),
     };
     localStorage.setItem(`wowo_peak_session_${g.roomCode}`, JSON.stringify(payload));
     localStorage.setItem('wowo_peak_last_room', g.roomCode);
@@ -496,18 +521,179 @@ export function App() {
     const g = gameRef.current;
     g.camYaw = g.yaw + Math.PI;
     g.camPitch = 0.34;
+    g.camDist = 10.6;
   }, []);
+
+  const handleTogglePhotoMode = useCallback(() => {
+    const g = gameRef.current;
+    if (!g.inGame || g.sessionEnded) return;
+    const next = !g.photoMode;
+    g.photoMode = next;
+    g.photoPreviewOpen = false;
+    setPhotoMode(next);
+    setCapturedPhotoUrl(null);
+    if (next) {
+      setPhotoSelfie(false);
+      g.camDist = 10.8;
+      g.joyVec = { x: 0, y: 0 };
+      soundRef.current?.playEmoteChime();
+    } else {
+      setPhotoSelfie(false);
+      resetCameraBehindPlayer();
+    }
+  }, [resetCameraBehindPlayer]);
+
+  const handleTogglePhotoAngle = useCallback(() => {
+    const g = gameRef.current;
+    if (!g.photoMode) return;
+    setPhotoSelfie((prev) => {
+      const nextSelfie = !prev;
+      if (nextSelfie) {
+        // Front-facing selfie angle looking back at avatar's face & friends/peak behind
+        g.camYaw = g.yaw + 0.24;
+        g.camPitch = 0.14;
+        g.camDist = 5.8;
+      } else {
+        g.camYaw = g.yaw + Math.PI;
+        g.camPitch = 0.32;
+        g.camDist = 10.8;
+      }
+      return nextSelfie;
+    });
+  }, []);
+
+  const handleClosePhotoPreview = useCallback(() => {
+    gameRef.current.photoPreviewOpen = false;
+    setCapturedPhotoUrl(null);
+  }, []);
+
+  const handleCapturePhoto = useCallback(() => {
+    const world = worldRef.current;
+    const g = gameRef.current;
+    if (!world || !g.inGame) return;
+    const glCanvas = world.captureScreenshotCanvas();
+    if (!glCanvas || glCanvas.width === 0 || glCanvas.height === 0) return;
+
+    const maxW = 1920;
+    const scale = glCanvas.width > maxW ? maxW / glCanvas.width : 1;
+    const outW = Math.max(1, Math.round(glCanvas.width * scale));
+    const outH = Math.max(1, Math.round(glCanvas.height * scale));
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = outW;
+    outCanvas.height = outH;
+    const ctx = outCanvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(glCanvas, 0, 0, outW, outH);
+
+    // Crisp expedition watermark card at bottom-left
+    const mapLabel =
+      MAP_THEMES.find((m) => m.id === settingsRef.current.selectedMap)?.name || 'Puncak Nusantara';
+    const roleLabel = g.role === 'teacher' ? 'Guru' : 'Siswa';
+    const altMeters = Math.max(0, Math.round(g.pos.y));
+    const cpLabel = g.currentCP >= 25 && g.essayDone ? 'Puncak Selesai' : `CP ${g.currentCP}/25`;
+    const pad = Math.max(14, Math.round(outW * 0.016));
+    const fontSizeTitle = Math.max(15, Math.round(outW * 0.015));
+    const fontSizeSub = Math.max(12, Math.round(outW * 0.0115));
+    const line1 = 'WOWO PEAK: 3D EXPEDITION';
+    const line2 = `${g.name || 'Pendaki'} (${roleLabel})  ·  Ruang #${g.roomCode || '-----'}`;
+    const line3 = `${mapLabel}  ·  ${cpLabel}  ·  Elevasi ${altMeters} m`;
+
+    ctx.save();
+    ctx.font = `800 ${fontSizeTitle}px "Barlow Condensed", "Plus Jakarta Sans", sans-serif`;
+    const w1 = ctx.measureText(line1).width;
+    ctx.font = `600 ${fontSizeSub}px "Plus Jakarta Sans", sans-serif`;
+    const w2 = ctx.measureText(line2).width;
+    const w3 = ctx.measureText(line3).width;
+    const boxW = Math.min(outW - pad * 2, Math.ceil(Math.max(w1, w2, w3)) + pad * 1.6);
+    const boxH = Math.round(fontSizeTitle + fontSizeSub * 2 + pad * 1.55);
+    const boxX = pad;
+    const boxY = outH - boxH - pad;
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.65)';
+    ctx.lineWidth = Math.max(1.5, Math.round(outW * 0.0014));
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxW, boxH, 12);
+    ctx.fill();
+    ctx.stroke();
+
+    const textX = boxX + Math.round(pad * 0.8);
+    let textY = boxY + Math.round(pad * 0.52) + fontSizeTitle;
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = `800 ${fontSizeTitle}px "Barlow Condensed", "Plus Jakarta Sans", sans-serif`;
+    ctx.fillText(line1, textX, textY);
+
+    textY += Math.round(fontSizeSub * 1.38);
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = `700 ${fontSizeSub}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillText(line2, textX, textY);
+
+    textY += Math.round(fontSizeSub * 1.32);
+    ctx.fillStyle = '#7dd3fc';
+    ctx.font = `600 ${fontSizeSub}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillText(line3, textX, textY);
+    ctx.restore();
+
+    soundRef.current?.playCameraShutter();
+    g.photoPreviewOpen = true;
+    setCapturedPhotoUrl(outCanvas.toDataURL('image/png'));
+  }, []);
+
+  const stopSpectate = useCallback(() => {
+    if (!spectatingIdRef.current) return;
+    spectatingIdRef.current = null;
+    setSpectatingTargetName(null);
+    resetCameraBehindPlayer();
+  }, [resetCameraBehindPlayer]);
+
+  const cycleSpectateTarget = useCallback(() => {
+    const world = worldRef.current;
+    const g = gameRef.current;
+    if (!world || !g.inGame || g.paused || g.sessionEnded) return;
+    const allRemote = Array.from(world.remotePlayers.entries());
+    const studentRemote = allRemote.filter(([, entry]) => entry.role === 'student');
+    const candidates = studentRemote.length > 0 ? studentRemote : allRemote;
+    if (candidates.length === 0) {
+      showWarning('Belum ada pendaki lain yang aktif untuk dipantau.', 2.5);
+      return;
+    }
+    const currIdx = spectatingIdRef.current
+      ? candidates.findIndex(([id]) => id === spectatingIdRef.current)
+      : -1;
+    const nextIdx = (currIdx + 1) % candidates.length;
+    const [nextId, nextEntry] = candidates[nextIdx];
+    spectatingIdRef.current = nextId;
+    setSpectatingTargetName(nextEntry.name);
+    g.vel.x = 0;
+    g.vel.z = 0;
+  }, [showWarning]);
+
+  useEffect(() => {
+    if (
+      photoMode &&
+      (sessionEnded || activeQuiz || activeEssayModal || (paused && role === 'student'))
+    ) {
+      gameRef.current.photoMode = false;
+      gameRef.current.photoPreviewOpen = false;
+      setPhotoMode(false);
+      setPhotoSelfie(false);
+      setCapturedPhotoUrl(null);
+    }
+  }, [activeEssayModal, activeQuiz, paused, photoMode, role, sessionEnded]);
 
   const tryJump = useCallback(() => {
     const g = gameRef.current;
     if (
       !g.inGame ||
+      spectatingIdRef.current ||
       (g.role === 'student' && g.roomStatus !== 'started') ||
       !g.onGround ||
       g.paused ||
       g.activeQuiz ||
       g.essayActive ||
-      g.sessionEnded
+      g.sessionEnded ||
+      g.photoPreviewOpen
     ) {
       return;
     }
@@ -515,6 +701,29 @@ export function App() {
     g.onGround = false;
     soundRef.current?.playJump();
   }, []);
+
+  const handleToggleTeacherFly = useCallback(() => {
+    const g = gameRef.current;
+    if (g.role !== 'teacher' || !g.inGame || g.sessionEnded) return;
+    const next = !g.flyMode;
+    g.flyMode = next;
+    g.flyVerticalDir = 0;
+    g.vel.y = 0;
+    if (next) {
+      g.onGround = false;
+      g.locomotionMode = 'walk';
+    }
+    setTeacherFlyMode(next);
+    soundRef.current?.playEmoteChime();
+    showWarning(
+      next
+        ? 'MODE TERBANG GURU AKTIF! Spasi/Naik terbang ke atas, Shift/C/Turun ke bawah (F = Matikan).'
+        : 'Mode Terbang Guru NONAKTIF. Kembali ke fisika berjalan normal.',
+      2.8,
+    );
+  }, [showWarning]);
+  const toggleTeacherFlyRef = useRef(handleToggleTeacherFly);
+  toggleTeacherFlyRef.current = handleToggleTeacherFly;
 
   const syncHeadlampIntensity = useCallback(() => {
     const g = gameRef.current;
@@ -686,6 +895,22 @@ export function App() {
       soundRef.current?.playCheckpoint();
       g.vel.set(0, 0, 0);
 
+      if (g.bridgeAttemptMode === 'challenge') {
+        g.score += 5;
+        setScore(g.score);
+        showWarning('Bonus Jalur Tantangan +5 pts! Hebat!', 2.6);
+        if (g.playerMesh && worldRef.current) {
+          worldRef.current.updateNameSprite(
+            g.playerMesh.userData.tagSprite as THREE.Sprite,
+            g.name,
+            g.role,
+            Math.max(g.currentCP, cpIndex),
+            g.score,
+          );
+        }
+      }
+      g.bridgeAttemptMode = 'none';
+
       // Laporkan pencapaian Checkpoint terbaru secara real-time ke Guru saat siswa tiba di pos
       worldRef.current?.updateCpBeacons(g.role, Math.max(g.currentCP, cpIndex), g.completedCPs);
       emitStudentProgress({ cp: Math.max(g.currentCP, cpIndex) });
@@ -703,7 +928,7 @@ export function App() {
       g.activeQuiz = quizObj;
       setActiveQuiz({ ...quizObj });
     },
-    [emitStudentProgress],
+    [emitStudentProgress, showWarning],
   );
 
   const advanceSummitEssay = useCallback(() => {
@@ -717,9 +942,13 @@ export function App() {
     if (isLast) {
       g.essayActive = false;
       setActiveEssayModal(null);
+      if (worldRef.current) {
+        worldRef.current.summitCelebrationActive = true;
+      }
+      soundRef.current?.playCheckpoint();
       showWarning(
-        'SELAMAT! Seluruh 25 Kuis PG & 5 Ujian Puncak Mount WOWO berhasil dituntaskan!',
-        5.5,
+        'Selamat! Kamu Mencapai Puncak WOWO! Bebas bergerak & merayakan bersama teman sambil menunggu teman lainnya selesai.',
+        6.0,
       );
     } else {
       const dur = Math.min(60, Math.max(5, g.explanationDurationSec || 45));
@@ -763,6 +992,22 @@ export function App() {
         : Math.min(questions.length - 1, g.essayAnswers.length);
     soundRef.current?.playCheckpoint();
     g.vel.set(0, 0, 0);
+    if (g.bridgeAttemptMode === 'challenge') {
+      g.score += 5;
+      setScore(g.score);
+      showWarning('Bonus Jalur Tantangan +5 pts! Hebat!', 2.6);
+      if (g.playerMesh && worldRef.current) {
+        worldRef.current.updateNameSprite(
+          g.playerMesh.userData.tagSprite as THREE.Sprite,
+          g.name,
+          g.role,
+          g.currentCP,
+          g.score,
+        );
+      }
+      emitStudentProgress();
+    }
+    g.bridgeAttemptMode = 'none';
     g.essayActive = true;
     g.essayFeedbackOpen = false;
     g.essayExplainLeft = 0;
@@ -774,7 +1019,7 @@ export function App() {
       explainTimeLeft: Math.min(60, Math.max(5, g.explanationDurationSec || 45)),
       feedback: null,
     });
-  }, []);
+  }, [emitStudentProgress, showWarning]);
 
   const submitSummitEssayAnswer = useCallback(
     (rawInput: string) => {
@@ -843,6 +1088,7 @@ export function App() {
       const world = worldRef.current;
       if (g.role !== 'student' || !world) return;
 
+      g.bridgeAttemptMode = 'none';
       g.fallCount += 1;
       setFallCount(g.fallCount);
       showWarning(reasonText, 3.0);
@@ -856,11 +1102,12 @@ export function App() {
       }
 
       const safeIdx = Math.min(25, Math.max(0, targetCpIdx));
-      const safeCP = CP_POINTS[safeIdx];
-      const nextCP = safeIdx >= 25 ? SUMMIT_EXAM_POINT : CP_POINTS[safeIdx + 1];
+      const safeCP = world.getCpPoint(safeIdx);
+      const nextCP = safeIdx >= 25 ? world.getSummitPoint() : world.getCpPoint(safeIdx + 1);
       const yawToNext = Math.atan2(nextCP.x - safeCP.x, nextCP.z - safeCP.z);
-      g.pos.set(safeCP.x, world.getGroundHeight(safeCP.x, safeCP.z) + 0.5, safeCP.z);
+      g.pos.set(safeCP.x, world.getGroundHeight(safeCP.x, safeCP.z), safeCP.z);
       g.vel.set(0, 0, 0);
+      g.onGround = true;
       g.yaw = yawToNext;
       g.camYaw = yawToNext + Math.PI;
 
@@ -873,9 +1120,11 @@ export function App() {
   const applyRoomSettings = useCallback(
     (s: RoomSettings) => {
       if (!s) return;
+      const prevMin = sessionDurationMinRef.current || 20;
       const normalized: RoomSettings = {
         timeOfDay: s.timeOfDay || 'pagi',
         weather: s.weather || 'cerah',
+        selectedMap: s.selectedMap || 'nusantara',
         quizDuration: Math.min(60, Math.max(5, Number(s.quizDuration) || 30)),
         difficultyLevel: s.difficultyLevel || 3,
         respawnMode: s.respawnMode || 'last_cp',
@@ -884,18 +1133,52 @@ export function App() {
         sessionDurationMinutes: s.sessionDurationMinutes || 20,
         explanationDurationSec: Math.min(60, Math.max(5, Number(s.explanationDurationSec) || 45)),
       };
+      sessionDurationMinRef.current = normalized.sessionDurationMinutes;
+      const g = gameRef.current;
+      if (
+        g.role === 'student' &&
+        g.inGame &&
+        !g.sessionEnded &&
+        prevMin !== normalized.sessionDurationMinutes
+      ) {
+        if (g.roomStatus === 'waiting') {
+          const fullSec = normalized.sessionDurationMinutes * 60;
+          remainingSecRef.current = fullSec;
+          setRemainingSec(fullSec);
+        } else {
+          const prevTotal = prevMin * 60;
+          const elapsed = Math.max(0, prevTotal - remainingSecRef.current);
+          const nextRem = Math.max(15, normalized.sessionDurationMinutes * 60 - elapsed);
+          remainingSecRef.current = nextRem;
+          setRemainingSec(nextRem);
+        }
+      }
       setSettings(normalized);
-      gameRef.current.quizDuration = normalized.quizDuration;
-      gameRef.current.explanationDurationSec = normalized.explanationDurationSec;
-      gameRef.current.respawnMode = normalized.respawnMode;
+      g.quizDuration = normalized.quizDuration;
+      g.explanationDurationSec = normalized.explanationDurationSec;
+      g.respawnMode = normalized.respawnMode;
       const world = worldRef.current;
       if (world) {
+        const targetMap: MapThemeId = normalized.selectedMap || 'nusantara';
+        if (targetMap !== world.selectedMap) {
+          world.applyMapTheme(targetMap);
+          if (g.inGame && !(g.role === 'teacher' && g.flyMode)) {
+            const safeIdx = Math.min(25, Math.max(0, g.currentCP));
+            const safeCP = world.getCpPoint(safeIdx);
+            const nextCP = safeIdx >= 25 ? world.getSummitPoint() : world.getCpPoint(safeIdx + 1);
+            g.pos.set(safeCP.x, world.getGroundHeight(safeCP.x, safeCP.z), safeCP.z);
+            g.vel.set(0, 0, 0);
+            g.onGround = true;
+            g.yaw = Math.atan2(nextCP.x - safeCP.x, nextCP.z - safeCP.z);
+            resetCameraBehindPlayer();
+          }
+        }
         world.applyEnvironment(normalized.timeOfDay, normalized.weather);
         world.setDifficultyLevel(normalized.difficultyLevel);
       }
       syncHeadlampIntensity();
     },
-    [syncHeadlampIntensity],
+    [resetCameraBehindPlayer, syncHeadlampIntensity],
   );
 
   const upsertRemotePlayer = useCallback((p: RemotePlayerPayload) => {
@@ -915,10 +1198,11 @@ export function App() {
         false,
       );
       world.scene.add(mesh);
+      const baseCp = world.getCpPoint(0);
       const targetPos = new THREE.Vector3(
-        p.pose?.x ?? CP_POINTS[0].x,
-        p.pose?.y ?? CP_POINTS[0].y,
-        p.pose?.z ?? CP_POINTS[0].z,
+        p.pose?.x ?? baseCp.x,
+        p.pose?.y ?? baseCp.y,
+        p.pose?.z ?? baseCp.z,
       );
       mesh.position.copy(targetPos);
       world.remotePlayers.set(p.id, {
@@ -1043,17 +1327,23 @@ export function App() {
       g.playerMesh.add(g.headLamp);
       world.scene.add(g.playerMesh);
 
+      sessionDurationMinRef.current = roomState.settings?.sessionDurationMinutes || 20;
+      applyRoomSettings(roomState.settings);
+
       const spawnIdx = Math.min(25, Math.max(0, g.currentCP));
-      const spawnCP = CP_POINTS[spawnIdx];
-      const nextCP = spawnIdx >= 25 ? SUMMIT_EXAM_POINT : CP_POINTS[spawnIdx + 1];
+      const spawnCP = world.getCpPoint(spawnIdx);
+      const nextCP = spawnIdx >= 25 ? world.getSummitPoint() : world.getCpPoint(spawnIdx + 1);
       const yawToNext = Math.atan2(nextCP.x - spawnCP.x, nextCP.z - spawnCP.z);
       g.pos.set(spawnCP.x, world.getGroundHeight(spawnCP.x, spawnCP.z), spawnCP.z);
       g.vel.set(0, 0, 0);
+      g.onGround = true;
       g.yaw = yawToNext;
       resetCameraBehindPlayer();
 
+      spectatingIdRef.current = null;
+      setSpectatingTargetName(null);
+      world.summitCelebrationActive = Boolean(g.essayDone);
       world.updateCpGatesForRole(g.role, g.currentCP, g.completedCPs);
-      applyRoomSettings(roomState.settings);
     },
     [applyRoomSettings, resetCameraBehindPlayer, saveStudentSession],
   );
@@ -1068,7 +1358,7 @@ export function App() {
       if (g.paused || !world) return;
       if (g.role === 'student' && g.roomStatus !== 'started') return;
 
-      const durationMs = Math.max(1000, Math.min(5000, Number(opts?.durationMs ?? 5000)));
+      const durationMs = Math.max(1000, Math.min(8000, Number(opts?.durationMs ?? 5000)));
       const durSec = durationMs / 1000;
 
       const existingTimer = disasterCleanupTimersRef.current.get(eventType);
@@ -1078,6 +1368,13 @@ export function App() {
         worldRef.current?.clearDisasterEffect(eventType as DisasterEventType);
       }, durationMs);
       disasterCleanupTimersRef.current.set(eventType, cleanupId);
+
+      if (eventType === 'brainrot') {
+        soundRef.current?.playBrainrotSound();
+        world.spawnBrainrotWave(g.pos.x, g.pos.z, durSec);
+        startDisasterCountdownBanner('AWAS ADA BRAINROT!', durationMs);
+        return;
+      }
 
       if (eventType === 'thunder') {
         triggerLightningFlash();
@@ -1105,10 +1402,65 @@ export function App() {
         return;
       }
 
-      if (eventType === 'hail' || eventType === 'landslide') {
+      if (eventType === 'hail') {
         soundRef.current?.playIceHail();
         world.spawnIceHailAhead(g.pos.x, g.pos.z, opts?.count ?? 50, durSec);
         startDisasterCountdownBanner('WASPADA BADAI HUJAN ES & ANGIN BEKU!', durationMs);
+        return;
+      }
+
+      if (eventType === 'landslide') {
+        soundRef.current?.playLandslide();
+        const mode = world.selectedMap === 'salju' ? 'ice' : 'rock';
+        world.spawnLandslideAhead(g.pos.x, g.pos.z, mode);
+        startDisasterCountdownBanner(
+          world.selectedMap === 'salju'
+            ? 'LONGSORAN TEBING SALJU! Hindari bongkahan es dari atas!'
+            : 'TANAH LONGSOR! Hati-hati guguran batu dari lereng atas!',
+          durationMs,
+        );
+        return;
+      }
+
+      if (eventType === 'yeti') {
+        soundRef.current?.playYetiRoar();
+        world.spawnYetiHorde(g.pos.x, g.pos.z, opts?.count ?? 3, durSec);
+        startDisasterCountdownBanner('AWAS MONSTER SALJU MENGHADANG!', durationMs);
+        return;
+      }
+
+      if (eventType === 'snowstorm') {
+        soundRef.current?.playSnowstormWind(durSec);
+        world.triggerSnowstorm(durSec);
+        startDisasterCountdownBanner('BADAI SALJU EVEREST! Gerakan melambat, waspadai tiupan angin beku!', durationMs);
+        return;
+      }
+
+      if (eventType === 'flash_flood') {
+        soundRef.current?.playFloodRumble(false);
+        world.triggerFloodDisaster('flash_flood', g.pos.y, durSec, g.pos.x, g.pos.z);
+        startDisasterCountdownBanner('AWAS BANJIR BANDANG! Segera naik ke tempat lebih tinggi!', durationMs);
+        return;
+      }
+
+      if (eventType === 'lava_rain') {
+        soundRef.current?.playWildfireCrackle();
+        world.spawnLavaRainAhead(g.pos.x, g.pos.z, durSec);
+        startDisasterCountdownBanner('AWAS HUJAN LAVA PIJAR! Hindari lingkaran merah!', durationMs);
+        return;
+      }
+
+      if (eventType === 'lava_landslide') {
+        soundRef.current?.playLandslide();
+        world.spawnLandslideAhead(g.pos.x, g.pos.z, 'lava');
+        startDisasterCountdownBanner('LONGSOR LAVA BEBATUAN! Hindari batu magma menggelinding!', durationMs);
+        return;
+      }
+
+      if (eventType === 'lava_flood') {
+        soundRef.current?.playFloodRumble(true);
+        world.triggerFloodDisaster('lava_flood', g.pos.y, durSec, g.pos.x, g.pos.z);
+        startDisasterCountdownBanner('BANJIR LAVA KALDERA NAIK! Segera panjat ke puncak!', durationMs);
         return;
       }
 
@@ -1186,6 +1538,11 @@ export function App() {
     }
     if (channelRef.current) {
       try {
+        void channelRef.current.untrack().catch(() => {});
+      } catch {
+        // ignore
+      }
+      try {
         void channelRef.current.unsubscribe();
       } catch {
         // ignore
@@ -1218,6 +1575,8 @@ export function App() {
       g.essayExplainLeft = 0;
       g.essayIsLastPending = false;
       remainingSecRef.current = 0;
+      spectatingIdRef.current = null;
+      setSpectatingTargetName(null);
       setRoomStatus('ended');
       setShowClassLobby(false);
 
@@ -1292,8 +1651,8 @@ export function App() {
 
   const activateExpeditionOnStudent = useCallback(
     (
-      remSec?: number,
-      endsAt?: number | null,
+      _remSec?: number,
+      _endsAt?: number | null,
       nextSettings?: RoomSettings,
       nextParticipants?: ParticipantSummary[],
     ) => {
@@ -1305,15 +1664,14 @@ export function App() {
       setShowClassLobby(false);
       setPaused(false);
 
-      if (typeof endsAt === 'number' && endsAt > 0) {
-        const computed = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
-        remainingSecRef.current = computed;
-        setRemainingSec(computed);
-      } else if (typeof remSec === 'number') {
-        const cleanRem = Math.max(0, Math.round(remSec));
-        remainingSecRef.current = cleanRem;
-        setRemainingSec(cleanRem);
-      }
+      // Anchor countdown to THIS student's own start time (full session duration, independent of Teacher's room clock)
+      const durMin = nextSettings?.sessionDurationMinutes || sessionDurationMinRef.current || 20;
+      sessionDurationMinRef.current = durMin;
+      const fullSec = durMin * 60;
+      remainingSecRef.current = fullSec;
+      setRemainingSec(fullSec);
+      studentStartedAtRef.current = Date.now();
+      joinedAtRef.current = studentStartedAtRef.current;
 
       if (nextSettings) {
         applyRoomSettings(nextSettings);
@@ -1321,11 +1679,12 @@ export function App() {
       if (Array.isArray(nextParticipants) && nextParticipants.length > 0) {
         setParticipants(nextParticipants);
       }
+      saveStudentSession();
 
       soundRef.current?.playCheckpoint();
       showWarning('EKSPEDISI DIMULAI OLEH GURU! Selamat mendaki Puncak Mount WOWO!', 4.2);
     },
-    [applyRoomSettings, showWarning],
+    [applyRoomSettings, saveStudentSession, showWarning],
   );
 
   const handleIncomingRoomCommand = useCallback(
@@ -1371,10 +1730,9 @@ export function App() {
         const nextPaused = Boolean(cmd.paused);
         cur.paused = nextPaused;
         setPaused(nextPaused);
-        if (typeof cmd.remainingSec === 'number') {
-          const rem = Math.max(0, Math.round(cmd.remainingSec));
-          remainingSecRef.current = rem;
-          setRemainingSec(rem);
+        if (nextPaused && spectatingIdRef.current) {
+          spectatingIdRef.current = null;
+          setSpectatingTargetName(null);
         }
         showWarning(
           nextPaused
@@ -1388,6 +1746,20 @@ export function App() {
       if (cmd.type === 'end_session') {
         recordHandled();
         applySessionEnded(cmd.reason ?? 'teacher', cmd.leaderboard, cmd.exportRows);
+        return;
+      }
+
+      if (cmd.type === 'CHANGE_MAP') {
+        recordHandled();
+        const nextMap: MapThemeId = cmd.mapId || cmd.settings?.selectedMap || 'nusantara';
+        applyRoomSettings({
+          ...settingsRef.current,
+          ...(cmd.settings || {}),
+          selectedMap: nextMap,
+        });
+        const mapLabel =
+          MAP_THEMES.find((m) => m.id === nextMap)?.name || 'Puncak Nusantara';
+        showWarning(`PETA 3D BERUBAH KE: ${mapLabel.toUpperCase()}! Lanjutkan pendakianmu!`, 3.2);
         return;
       }
 
@@ -1406,7 +1778,7 @@ export function App() {
         offsets: cmd.offsets,
       });
     },
-    [activateExpeditionOnStudent, applySessionEnded, handleTeacherEvent, showWarning],
+    [activateExpeditionOnStudent, applyRoomSettings, applySessionEnded, handleTeacherEvent, showWarning],
   );
 
   const channelCallbacksRef = useRef({
@@ -1507,7 +1879,14 @@ export function App() {
               essayAnswers: [],
               online: true,
               lastSeenAt: Date.now(),
-              pose: { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: p.cp ?? 0, state: 'idle' },
+              pose: {
+                x: worldRef.current?.getCpPoint(0).x ?? CP_POINTS[0].x,
+                y: worldRef.current?.getCpPoint(0).y ?? CP_POINTS[0].y,
+                z: worldRef.current?.getCpPoint(0).z ?? CP_POINTS[0].z,
+                yaw: 0,
+                cp: p.cp ?? 0,
+                state: 'idle',
+              },
             });
             changed = true;
           } else {
@@ -1650,6 +2029,7 @@ export function App() {
         const cur = gameRef.current;
         if (cur.role !== 'student' || cur.sessionEnded) return;
         const newRow = (payload.new ?? null) as {
+          selected_map?: MapThemeId;
           active_event?: RoomCommandPayload | null;
           config?: {
             status?: RoomStatus;
@@ -1658,6 +2038,7 @@ export function App() {
             endReason?: 'teacher' | 'timeout';
             remainingSec?: number;
             sessionEndsAt?: number | null;
+            selected_map?: MapThemeId;
             settings?: RoomSettings;
             active_event?: RoomCommandPayload | null;
           } | null;
@@ -1671,8 +2052,17 @@ export function App() {
 
         const cfg = newRow.config;
         if (!cfg) return;
+        const resolvedMap = newRow.selected_map || cfg.selected_map || cfg.settings?.selectedMap;
         if (cfg.settings) {
-          cb.applyRoomSettings(cfg.settings);
+          cb.applyRoomSettings({
+            ...cfg.settings,
+            selectedMap: resolvedMap || cfg.settings.selectedMap || 'nusantara',
+          });
+        } else if (resolvedMap) {
+          cb.applyRoomSettings({
+            ...settingsRef.current,
+            selectedMap: resolvedMap,
+          });
         }
         if (cfg.status === 'started' && cur.roomStatus === 'waiting') {
           cb.activateExpeditionOnStudent(cfg.remainingSec, cfg.sessionEndsAt, cfg.settings);
@@ -1783,7 +2173,14 @@ export function App() {
             essayAnswers: Array.isArray(msg.essayAnswers) ? msg.essayAnswers : [],
             online: true,
             lastSeenAt: Date.now(),
-            pose: msg.pose || { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: 0, state: 'idle' },
+            pose: msg.pose || {
+              x: worldRef.current?.getCpPoint(0).x ?? CP_POINTS[0].x,
+              y: worldRef.current?.getCpPoint(0).y ?? CP_POINTS[0].y,
+              z: worldRef.current?.getCpPoint(0).z ?? CP_POINTS[0].z,
+              yaw: 0,
+              cp: 0,
+              state: 'idle',
+            },
           };
           room.students.set(studentId, stu);
         }
@@ -1852,7 +2249,14 @@ export function App() {
             essayAnswers: [],
             online: true,
             lastSeenAt: Date.now(),
-            pose: cachedRemote?.pose || { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: 0, state: 'idle' },
+            pose: cachedRemote?.pose || {
+              x: worldRef.current?.getCpPoint(0).x ?? CP_POINTS[0].x,
+              y: worldRef.current?.getCpPoint(0).y ?? CP_POINTS[0].y,
+              z: worldRef.current?.getCpPoint(0).z ?? CP_POINTS[0].z,
+              yaw: 0,
+              cp: 0,
+              state: 'idle',
+            },
           };
           room.students.set(stu.id, stu);
         }
@@ -2040,25 +2444,11 @@ export function App() {
           }
           cur.paused = Boolean(msg.paused);
           setPaused(cur.paused);
-          if (typeof msg.remainingSec === 'number') {
-            const rem = Math.max(0, Math.round(msg.remainingSec));
-            remainingSecRef.current = rem;
-            setRemainingSec(rem);
-          }
           break;
 
         case 'timer_sync':
           if (msg.status === 'started' && cur.roomStatus === 'waiting') {
             cb.activateExpeditionOnStudent(msg.remainingSec);
-          }
-          if (typeof msg.remainingSec === 'number') {
-            const rem = Math.max(0, Math.round(msg.remainingSec));
-            remainingSecRef.current = rem;
-            setRemainingSec(rem);
-            if (rem > 0 && timeoutFallbackRef.current) {
-              window.clearTimeout(timeoutFallbackRef.current);
-              timeoutFallbackRef.current = null;
-            }
           }
           if (typeof msg.paused === 'boolean') {
             cur.paused = msg.paused;
@@ -2399,7 +2789,14 @@ export function App() {
                 essayAnswers: [],
                 online: true,
                 lastSeenAt: Date.now(),
-                pose: { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: item.cp ?? 0, state: 'idle' },
+                pose: {
+                  x: worldRef.current?.getCpPoint(0).x ?? CP_POINTS[0].x,
+                  y: worldRef.current?.getCpPoint(0).y ?? CP_POINTS[0].y,
+                  z: worldRef.current?.getCpPoint(0).z ?? CP_POINTS[0].z,
+                  yaw: 0,
+                  cp: item.cp ?? 0,
+                  state: 'idle',
+                },
               });
               changed = true;
             } else {
@@ -2643,18 +3040,35 @@ export function App() {
         }
 
         let isMoving = false;
+        let spectatedEntry = spectatingIdRef.current
+          ? world.remotePlayers.get(spectatingIdRef.current)
+          : undefined;
+        if (spectatingIdRef.current && !spectatedEntry) {
+          spectatingIdRef.current = null;
+          setSpectatingTargetName(null);
+        }
+        const canMoveCamera =
+          !g.activeQuiz &&
+          !g.essayActive &&
+          !g.sessionEnded &&
+          !g.photoPreviewOpen &&
+          ((!g.paused && (g.role === 'teacher' || g.roomStatus === 'started')) || g.photoMode);
+        if (canMoveCamera) {
+          // Camera controls: Arrow keys + Q/E (works during normal play, peer spectate & Photo Mode)
+          if (g.keys['ArrowLeft'] || g.keys['KeyQ']) g.camYaw += 2.0 * dt;
+          if (g.keys['ArrowRight'] || g.keys['KeyE']) g.camYaw -= 2.0 * dt;
+          if (g.keys['ArrowUp']) g.camPitch = Math.min(1.12, g.camPitch + 1.35 * dt);
+          if (g.keys['ArrowDown']) g.camPitch = Math.max(0.06, g.camPitch - 1.35 * dt);
+        }
         const canControlAvatar =
           !g.paused &&
           !g.activeQuiz &&
           !g.essayActive &&
           !g.sessionEnded &&
-          (g.role === 'teacher' || g.roomStatus === 'started');
+          !g.photoPreviewOpen &&
+          (g.role === 'teacher' || g.roomStatus === 'started') &&
+          !spectatedEntry;
         if (canControlAvatar) {
-          // Camera controls: Arrow keys + Q/E
-          if (g.keys['ArrowLeft'] || g.keys['KeyQ']) g.camYaw += 2.0 * dt;
-          if (g.keys['ArrowRight'] || g.keys['KeyE']) g.camYaw -= 2.0 * dt;
-          if (g.keys['ArrowUp']) g.camPitch = Math.min(1.12, g.camPitch + 1.35 * dt);
-          if (g.keys['ArrowDown']) g.camPitch = Math.max(0.06, g.camPitch - 1.35 * dt);
 
           // Character movement: WASD + mobile virtual joystick
           let moveForward =
@@ -2673,116 +3087,134 @@ export function App() {
           }
           isMoving = mag > 0.08;
 
-          const ladderRes = world.handleLadderMovement(g.pos, moveForward, dt);
-          if (ladderRes.climbing) {
-            g.locomotionMode = 'climb';
-            g.vel.y = 0;
+          if (g.role === 'teacher' && g.flyMode) {
+            g.locomotionMode = 'walk';
             g.onGround = false;
-            g.walkAnimTime += dt * 10.5;
-            if (now - g.lastLadderSoundAt > 260) {
-              g.lastLadderSoundAt = now;
-              sound.playLadderClimb();
+            const maxFlySpeed = 48.0 * 1.8;
+            const sinY = Math.sin(g.camYaw);
+            const cosY = Math.cos(g.camYaw);
+            const dirX = -sinY * moveForward + cosY * moveRight;
+            const dirZ = -cosY * moveForward - sinY * moveRight;
+
+            const targetVx = isMoving ? dirX * maxFlySpeed : 0;
+            const targetVz = isMoving ? dirZ * maxFlySpeed : 0;
+            const flyAlpha = 1 - Math.exp(-12.0 * dt);
+            g.vel.x += (targetVx - g.vel.x) * flyAlpha;
+            g.vel.z += (targetVz - g.vel.z) * flyAlpha;
+            if (!isMoving && Math.hypot(g.vel.x, g.vel.z) < 0.08) {
+              g.vel.x = 0;
+              g.vel.z = 0;
+            }
+
+            const keyUp = Boolean(g.keys['Space']) || g.flyVerticalDir === 1;
+            const keyDown =
+              Boolean(g.keys['ShiftLeft'] || g.keys['ShiftRight'] || g.keys['KeyC']) ||
+              g.flyVerticalDir === -1;
+            const vertDir = (keyUp ? 1 : 0) - (keyDown ? 1 : 0);
+            const targetVy = vertDir * 44.0;
+            g.vel.y += (targetVy - g.vel.y) * flyAlpha;
+            if (vertDir === 0 && Math.abs(g.vel.y) < 0.08) {
+              g.vel.y = 0;
+            }
+
+            g.pos.x = Math.max(-1420, Math.min(1420, g.pos.x + g.vel.x * dt));
+            g.pos.z = Math.max(-1420, Math.min(1420, g.pos.z + g.vel.z * dt));
+            g.pos.y = Math.max(-25, Math.min(760, g.pos.y + g.vel.y * dt));
+
+            if (isMoving) {
+              const targetYaw = Math.atan2(dirX, dirZ);
+              const diffYaw = ((targetYaw - g.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+              g.yaw += diffYaw * (1 - Math.exp(-11.5 * dt));
+            }
+            const horizSpeed = Math.hypot(g.vel.x, g.vel.z);
+            if (horizSpeed > 0.5) {
+              g.walkAnimTime += dt * Math.min(8.5, horizSpeed * 0.16);
             }
           } else {
-            const slideRes = world.handleSlideMovement(g.pos, dt, sound);
-            if (slideRes.sliding) {
-              g.locomotionMode = 'slide';
-              g.yaw = slideRes.yaw;
+            const ladderRes = world.handleLadderMovement(g.pos, moveForward, dt);
+            if (ladderRes.climbing) {
+              g.locomotionMode = 'climb';
               g.vel.y = 0;
-              g.onGround = true;
+              g.onGround = false;
+              g.walkAnimTime += dt * 10.5;
+              if (now - g.lastLadderSoundAt > 260) {
+                g.lastLadderSoundAt = now;
+                sound.playLadderClimb();
+              }
             } else {
-              g.locomotionMode = 'walk';
-              const chillMult = g.role === 'student' && g.chillSlowTimer > 0 ? 0.55 : 1.0;
-              const maxWalkSpeed = (g.role === 'teacher' ? 48.0 : 19.0) * chillMult;
-              const sinY = Math.sin(g.camYaw);
-              const cosY = Math.cos(g.camYaw);
-              const dirX = -sinY * moveForward + cosY * moveRight;
-              const dirZ = -cosY * moveForward - sinY * moveRight;
+              const slideRes = world.handleSlideMovement(g.pos, dt, sound);
+              if (slideRes.sliding) {
+                g.locomotionMode = 'slide';
+                g.yaw = slideRes.yaw;
+                g.vel.y = 0;
+                g.onGround = true;
+              } else {
+                g.locomotionMode = 'walk';
+                const isFrostSlowed =
+                  g.role === 'student' && (g.chillSlowTimer > 0 || world.isFrostSlowActive());
+                const chillMult = isFrostSlowed ? 0.55 : 1.0;
+                const maxWalkSpeed = (g.role === 'teacher' ? 48.0 : 13.7) * chillMult;
+                const sinY = Math.sin(g.camYaw);
+                const cosY = Math.cos(g.camYaw);
+                const dirX = -sinY * moveForward + cosY * moveRight;
+                const dirZ = -cosY * moveForward - sinY * moveRight;
 
-              const targetVx = isMoving ? dirX * maxWalkSpeed : 0;
-              const targetVz = isMoving ? dirZ * maxWalkSpeed : 0;
-              const accelRate = g.onGround ? (isMoving ? 15.5 : 19.5) : isMoving ? 7.5 : 3.5;
-              const velAlpha = 1 - Math.exp(-accelRate * dt);
-              g.vel.x += (targetVx - g.vel.x) * velAlpha;
-              g.vel.z += (targetVz - g.vel.z) * velAlpha;
-              if (!isMoving && Math.hypot(g.vel.x, g.vel.z) < 0.08) {
-                g.vel.x = 0;
-                g.vel.z = 0;
-              }
-
-              const horizSpeed = Math.hypot(g.vel.x, g.vel.z);
-              if (isMoving) {
-                const targetYaw = Math.atan2(dirX, dirZ);
-                const diffYaw = ((targetYaw - g.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-                g.yaw += diffYaw * (1 - Math.exp(-11.5 * dt));
-              }
-              if (horizSpeed > 0.45) {
-                const strideRate =
-                  g.role === 'teacher' ? Math.min(11.5, horizSpeed * 0.28) : horizSpeed * 0.44;
-                g.walkAnimTime += dt * strideRate;
-                const beat = Math.floor(g.walkAnimTime / Math.PI);
-                if (g.onGround && beat !== g.lastStepBeat) {
-                  g.lastStepBeat = beat;
-                  sound.playFootstep(world.getSurfaceTypeAt(g.pos.x, g.pos.z));
-                }
-              }
-
-              const subSteps = Math.min(4, Math.max(1, Math.ceil(dt / (1 / 60))));
-              const subDt = dt / subSteps;
-              const wasOnGroundBeforeStep = g.onGround;
-              let landedImpactVy = 0;
-
-              for (let s = 0; s < subSteps; s++) {
-                const prevX = g.pos.x;
-                const prevZ = g.pos.z;
-
-                g.pos.x = Math.max(-1420, Math.min(1420, g.pos.x + g.vel.x * subDt));
-                g.pos.z = Math.max(-1420, Math.min(1420, g.pos.z + g.vel.z * subDt));
-
-                if (g.role === 'student') {
-                  world.applyWindPush(g.pos, subDt, g.paused);
-                  world.applySlipperySlopeAndPerimeter(g.pos, subDt, g.role);
+                const targetVx = isMoving ? dirX * maxWalkSpeed : 0;
+                const targetVz = isMoving ? dirZ * maxWalkSpeed : 0;
+                const onIce = g.onGround && world.isOnIceBridge(g.pos.x, g.pos.z, g.pos.y);
+                const accelRate = g.onGround
+                  ? onIce
+                    ? isMoving
+                      ? 6.2
+                      : 2.8
+                    : isMoving
+                      ? 15.5
+                      : 19.5
+                  : isMoving
+                    ? 7.5
+                    : 3.5;
+                const velAlpha = 1 - Math.exp(-accelRate * dt);
+                g.vel.x += (targetVx - g.vel.x) * velAlpha;
+                g.vel.z += (targetVz - g.vel.z) * velAlpha;
+                if (!isMoving && Math.hypot(g.vel.x, g.vel.z) < 0.08) {
+                  g.vel.x = 0;
+                  g.vel.z = 0;
                 }
 
-                world.resolveHorizontalCollisions(
-                  g.pos,
-                  0.55,
-                  g.role,
-                  g.currentCP,
-                  g.completedCPs,
-                );
-
-                const stepDist = Math.hypot(g.pos.x - prevX, g.pos.z - prevZ);
-                if (g.role === 'student' && g.onGround && stepDist > 0.005) {
-                  const candidateGroundY = world.getGroundHeight(g.pos.x, g.pos.z, g.pos.y);
-                  const rise = candidateGroundY - g.pos.y;
-                  if (rise > 1.45 && rise / Math.max(0.05, stepDist) > 1.85) {
-                    g.pos.x = prevX;
-                    g.pos.z = prevZ;
+                const horizSpeed = Math.hypot(g.vel.x, g.vel.z);
+                if (isMoving) {
+                  const targetYaw = Math.atan2(dirX, dirZ);
+                  const diffYaw = ((targetYaw - g.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+                  g.yaw += diffYaw * (1 - Math.exp(-11.5 * dt));
+                }
+                if (horizSpeed > 0.45) {
+                  const strideRate =
+                    g.role === 'teacher' ? Math.min(11.5, horizSpeed * 0.28) : horizSpeed * 0.44;
+                  g.walkAnimTime += dt * strideRate;
+                  const beat = Math.floor(g.walkAnimTime / Math.PI);
+                  if (g.onGround && beat !== g.lastStepBeat) {
+                    g.lastStepBeat = beat;
+                    sound.playFootstep(world.getSurfaceTypeAt(g.pos.x, g.pos.z));
                   }
                 }
 
-                if (g.role === 'student') {
-                  const antiCheat = world.enforceStudentTrailAndGates(
-                    g.pos,
-                    g.currentCP,
-                    g.completedCPs,
-                  );
-                  if (antiCheat.skippedAheadCp !== null) {
-                    const safeCP = CP_POINTS[Math.min(25, Math.max(0, g.currentCP))];
-                    g.pos.set(safeCP.x, world.getGroundHeight(safeCP.x, safeCP.z) + 0.4, safeCP.z);
-                    g.vel.set(0, 0, 0);
-                    showWarning('Selesaikan Checkpoint sebelumnya terlebih dahulu!', 3.0);
-                    break;
-                  } else if (antiCheat.blockedByGateCp !== null && now - g.lastGateWarnAt > 2000) {
-                    g.lastGateWarnAt = now;
-                    showWarning(
-                      antiCheat.blockedByGateCp === 25
-                        ? 'Jawab kuis CP 25 terlebih dahulu untuk membuka Gerbang Ujian Akhir!'
-                        : `Jawab kuis CP ${antiCheat.blockedByGateCp} untuk membuka gerbang!`,
-                      2.5,
-                    );
+                const subSteps = Math.min(4, Math.max(1, Math.ceil(dt / (1 / 60))));
+                const subDt = dt / subSteps;
+                const wasOnGroundBeforeStep = g.onGround;
+                let landedImpactVy = 0;
+
+                for (let s = 0; s < subSteps; s++) {
+                  const prevX = g.pos.x;
+                  const prevZ = g.pos.z;
+
+                  g.pos.x = Math.max(-2200, Math.min(2200, g.pos.x + g.vel.x * subDt));
+                  g.pos.z = Math.max(-2200, Math.min(2200, g.pos.z + g.vel.z * subDt));
+
+                  if (g.role === 'student') {
+                    world.applyWindPush(g.pos, subDt, g.paused);
+                    world.applySlipperySlopeAndPerimeter(g.pos, subDt, g.role);
                   }
+
                   world.resolveHorizontalCollisions(
                     g.pos,
                     0.55,
@@ -2790,34 +3222,75 @@ export function App() {
                     g.currentCP,
                     g.completedCPs,
                   );
-                }
 
-                const wasOnGroundSub = g.onGround;
-                const prevVy = g.vel.y;
-                g.vel.y -= 28.5 * subDt;
-                g.pos.y += g.vel.y * subDt;
-                const groundY = world.getGroundHeight(g.pos.x, g.pos.z, g.pos.y);
-                if (g.pos.y <= groundY) {
-                  g.pos.y = groundY;
-                  g.vel.y = 0;
-                  g.onGround = true;
-                  if (!wasOnGroundSub && prevVy < -3.5) {
-                    landedImpactVy = Math.min(landedImpactVy, prevVy);
+                  const stepDist = Math.hypot(g.pos.x - prevX, g.pos.z - prevZ);
+                  if (g.role === 'student' && g.onGround && stepDist > 0.005) {
+                    const candidateGroundY = world.getGroundHeight(g.pos.x, g.pos.z, g.pos.y);
+                    const rise = candidateGroundY - g.pos.y;
+                    if (rise > 1.45 && rise / Math.max(0.05, stepDist) > 1.85) {
+                      g.pos.x = prevX;
+                      g.pos.z = prevZ;
+                    }
                   }
-                } else if (wasOnGroundSub && g.vel.y <= 0 && g.pos.y - groundY < 0.24) {
-                  g.pos.y = groundY;
-                  g.vel.y = 0;
-                  g.onGround = true;
-                } else {
-                  g.onGround = false;
-                }
-              }
 
-              if (!wasOnGroundBeforeStep && g.onGround && landedImpactVy < -3.5) {
-                sound.playLand(
-                  world.getSurfaceTypeAt(g.pos.x, g.pos.z),
-                  Math.min(1.4, Math.abs(landedImpactVy) / 14),
-                );
+                  if (g.role === 'student') {
+                    const antiCheat = world.enforceStudentTrailAndGates(
+                      g.pos,
+                      g.currentCP,
+                      g.completedCPs,
+                    );
+                    if (antiCheat.skippedAheadCp !== null) {
+                      const safeCP = world.getCpPoint(Math.min(25, Math.max(0, g.currentCP)));
+                      g.pos.set(safeCP.x, world.getGroundHeight(safeCP.x, safeCP.z), safeCP.z);
+                      g.vel.set(0, 0, 0);
+                      g.onGround = true;
+                      showWarning('Selesaikan Checkpoint sebelumnya terlebih dahulu!', 3.0);
+                      break;
+                    } else if (antiCheat.blockedByGateCp !== null && now - g.lastGateWarnAt > 2000) {
+                      g.lastGateWarnAt = now;
+                      showWarning(
+                        antiCheat.blockedByGateCp === 25
+                          ? 'Jawab kuis CP 25 terlebih dahulu untuk membuka Gerbang Ujian Akhir!'
+                          : `Jawab kuis CP ${antiCheat.blockedByGateCp} untuk membuka gerbang!`,
+                        2.5,
+                      );
+                    }
+                    world.resolveHorizontalCollisions(
+                      g.pos,
+                      0.55,
+                      g.role,
+                      g.currentCP,
+                      g.completedCPs,
+                    );
+                  }
+
+                  const wasOnGroundSub = g.onGround;
+                  const prevVy = g.vel.y;
+                  g.vel.y -= 28.5 * subDt;
+                  g.pos.y += g.vel.y * subDt;
+                  const groundY = world.getGroundHeight(g.pos.x, g.pos.z, g.pos.y);
+                  if (g.pos.y <= groundY) {
+                    g.pos.y = groundY;
+                    g.vel.y = 0;
+                    g.onGround = true;
+                    if (!wasOnGroundSub && prevVy < -3.5) {
+                      landedImpactVy = Math.min(landedImpactVy, prevVy);
+                    }
+                  } else if (wasOnGroundSub && g.vel.y <= 0 && g.pos.y - groundY < 0.24) {
+                    g.pos.y = groundY;
+                    g.vel.y = 0;
+                    g.onGround = true;
+                  } else {
+                    g.onGround = false;
+                  }
+                }
+
+                if (!wasOnGroundBeforeStep && g.onGround && landedImpactVy < -3.5) {
+                  sound.playLand(
+                    world.getSurfaceTypeAt(g.pos.x, g.pos.z),
+                    Math.min(1.4, Math.abs(landedImpactVy) / 14),
+                  );
+                }
               }
             }
           }
@@ -2829,9 +3302,10 @@ export function App() {
               g.completedCPs,
             );
             if (antiCheat.skippedAheadCp !== null) {
-              const safeCP = CP_POINTS[Math.min(25, Math.max(0, g.currentCP))];
-              g.pos.set(safeCP.x, world.getGroundHeight(safeCP.x, safeCP.z) + 0.4, safeCP.z);
+              const safeCP = world.getCpPoint(Math.min(25, Math.max(0, g.currentCP)));
+              g.pos.set(safeCP.x, world.getGroundHeight(safeCP.x, safeCP.z), safeCP.z);
               g.vel.set(0, 0, 0);
+              g.onGround = true;
               showWarning('Selesaikan Checkpoint sebelumnya terlebih dahulu!', 3.0);
             } else if (antiCheat.blockedByGateCp !== null && now - g.lastGateWarnAt > 2000) {
               g.lastGateWarnAt = now;
@@ -2845,14 +3319,37 @@ export function App() {
           }
 
           if (g.role === 'student') {
+            if (g.onGround) {
+              const laneMode = world.getBridgeLaneAt(g.pos.x, g.pos.z, g.pos.y);
+              if (laneMode === 'safe') {
+                g.bridgeAttemptMode = 'safe';
+              } else if (laneMode === 'challenge' && g.bridgeAttemptMode === 'none') {
+                g.bridgeAttemptMode = 'challenge';
+              }
+            }
             const tr = world.getNearestTrailInfo(g.pos.x, g.pos.z);
             const groundBelow = world.getGroundHeight(g.pos.x, g.pos.z, g.pos.y);
-            if ((groundBelow < -100 && (g.pos.y < tr.y - 10.5 || g.pos.y < -18)) || g.pos.y < -30) {
-              triggerStudentFall('Terjatuh ke jurang antar pulau! Kembali ke titik aman.');
+            const isTerrestrialFloor =
+              world.selectedMap === 'lava' ||
+              world.selectedMap === 'salju';
+            if (
+              (groundBelow < -100 &&
+                (g.pos.y < tr.y - 10.5 || g.pos.y < -18 || (isTerrestrialFloor && g.pos.y <= 0.25))) ||
+              g.pos.y < -30
+            ) {
+              triggerStudentFall(
+                world.selectedMap === 'lava'
+                  ? 'Terjatuh ke lahar kawah vulkanik! Kembali ke titik aman.'
+                  : world.selectedMap === 'salju'
+                    ? 'Terjatuh ke jurang gletser Everest! Kembali ke titik aman.'
+                    : world.selectedMap === 'nusantara'
+                      ? 'Terjatuh dari jalur pulau Nusantara! Kembali ke titik aman.'
+                      : 'Terjatuh ke jurang jalur gunung! Kembali ke titik aman.',
+              );
             } else {
               const nextCP = g.currentCP + 1;
               if (nextCP <= 25 && !g.completedCPs.includes(nextCP)) {
-                const cp = CP_POINTS[nextCP];
+                const cp = world.getCpPoint(nextCP);
                 if (
                   Math.hypot(g.pos.x - cp.x, g.pos.z - cp.z) < 8.0 &&
                   Math.abs(g.pos.y - cp.y) < 6.5
@@ -2865,9 +3362,10 @@ export function App() {
                 !g.essayDone &&
                 !g.essayActive
               ) {
+                const summitPt = world.getSummitPoint();
                 if (
-                  Math.hypot(g.pos.x - SUMMIT_EXAM_POINT.x, g.pos.z - SUMMIT_EXAM_POINT.z) < 9.5 &&
-                  Math.abs(g.pos.y - SUMMIT_EXAM_POINT.y) < 8.0
+                  Math.hypot(g.pos.x - summitPt.x, g.pos.z - summitPt.z) < 9.5 &&
+                  Math.abs(g.pos.y - summitPt.y) < 8.0
                 ) {
                   openSummitEssay();
                 }
@@ -3009,7 +3507,14 @@ export function App() {
         }
 
         // Update World Visuals, Wildlife, Ghosts & Hazard Collisions
-        const { hitBy, hitIceHail, shakeIntensity } = world.updateVisuals(dt, elapsed, g.pos, sound, g.paused);
+        const { hitBy, hitIceHail, shakeIntensity, pushImpulse } = world.updateVisuals(
+          dt,
+          elapsed,
+          g.pos,
+          sound,
+          g.paused,
+          g.role === 'teacher' && g.flyMode,
+        );
         if (hitIceHail && g.role === 'student' && !g.paused && !g.activeQuiz && !g.essayActive && !g.sessionEnded) {
           g.chillSlowTimer = 4.0;
           if (now - g.lastChillWarnAt > 2500) {
@@ -3019,29 +3524,80 @@ export function App() {
           }
         }
         if (hitBy && g.role === 'student' && !g.paused && !g.activeQuiz && !g.essayActive && !g.sessionEnded) {
-          g.hurtTimer = 0.55;
-          const messages: Record<string, string> = {
-            kuntilanak: 'Terkena Kuntilanak! Kembali ke titik aman.',
-            pocong: 'Tertabrak Pocong dan terdorong jatuh dari tebing!',
-            landslide: 'Terkena rintangan bongkahan batu gunung! Kembali ke titik aman.',
-            log: 'Terhantam rintangan jalur gunung! Kembali ke titik aman.',
-            tiger: 'Diterjang Harimau Sumatera! Kembali ke titik aman.',
-            bear: 'Diseruduk Beruang Madu! Kembali ke titik aman.',
-            boar: 'Ditabrak Babi Hutan di jalur setapak!',
-            snake: 'Dipatuk Ular Piton di tikungan berbatu!',
-            bridge_plank: 'Terpeleset papan jembatan goyang!',
-            crumble_stone: 'Batu pijakan runtuh di bawah kaki!',
-            geyser: 'Tersembur uap panas Geyser Vulkanik!',
-            lightning: 'Tersambar petir badai di jalur pendakian!',
-            wildfire: 'Terkena bola Hujan Api & bara langit! Kembali ke titik aman.',
-            fire_rain: 'Terkena bola Hujan Api dari langit gunung! Kembali ke titik aman.',
-            meteor: 'Dihantam meteor api dari langit kiamat! Kembali ke titik aman.',
-          };
-          triggerStudentFall(messages[hitBy] || 'Terkena rintangan gunung! Kembali ke titik aman.');
+          if (hitBy === 'brainrot') {
+            g.hurtTimer = 0.45;
+            g.vel.y = 6.5;
+            g.vel.x = -Math.sin(g.yaw) * 8.5;
+            g.vel.z = -Math.cos(g.yaw) * 8.5;
+            g.onGround = false;
+            sound.playBrainrotSound();
+            showWarning('TERTABRAK MEME BRAINROT! Tetap fokus mendaki!', 2.2);
+          } else if (hitBy === 'yeti') {
+            g.hurtTimer = 0.48;
+            const impX = pushImpulse?.x ?? -Math.sin(g.yaw) * 14.5;
+            const impZ = pushImpulse?.z ?? -Math.cos(g.yaw) * 14.5;
+            g.vel.x = impX;
+            g.vel.z = impZ;
+            g.vel.y = 6.2;
+            g.onGround = false;
+            sound.playYetiRoar();
+            showWarning('TERTABRAK MONSTER SALJU (YETI)! Tetap fokus dan jaga keseimbangan!', 2.4);
+          } else if (hitBy === 'bridge_push' || hitBy === 'bridge_boulder') {
+            g.hurtTimer = 0.42;
+            const impX = pushImpulse?.x ?? -Math.sin(g.yaw) * 14;
+            const impZ = pushImpulse?.z ?? -Math.cos(g.yaw) * 14;
+            g.vel.x = impX;
+            g.vel.z = impZ;
+            g.vel.y = 5.2;
+            g.onGround = false;
+            sound.playQuizResult(false);
+            showWarning(
+              hitBy === 'bridge_push'
+                ? 'TERDORONG BALOK AYUNAN JEMBATAN! Jaga keseimbangan!'
+                : 'TERTABRAK BATU RINTANGAN JEMBATAN! Lompat untuk menghindar!',
+              2.2,
+            );
+          } else {
+            g.hurtTimer = 0.55;
+            const messages: Record<string, string> = {
+              kuntilanak: 'Terkena Kuntilanak! Kembali ke titik aman.',
+              pocong: 'Tertabrak Pocong dan terdorong jatuh dari tebing!',
+              landslide: 'Terkena rintangan bongkahan batu gunung! Kembali ke titik aman.',
+              log: 'Terhantam rintangan jalur gunung! Kembali ke titik aman.',
+              tiger: 'Diterjang Harimau Sumatera! Kembali ke titik aman.',
+              bear: 'Diseruduk Beruang Madu! Kembali ke titik aman.',
+              boar: 'Ditabrak Babi Hutan di jalur setapak!',
+              snake: 'Dipatuk Ular Piton di tikungan berbatu!',
+              bridge_plank: 'Terpeleset papan jembatan goyang!',
+              crumble_stone: 'Batu pijakan runtuh di bawah kaki!',
+              geyser: 'Tersembur uap panas Geyser Vulkanik!',
+              lightning: 'Tersambar petir badai di jalur pendakian!',
+              wildfire: 'Terkena bola Hujan Api & bara langit! Kembali ke titik aman.',
+              fire_rain: 'Terkena bola Hujan Api dari langit gunung! Kembali ke titik aman.',
+              meteor: 'Dihantam meteor api dari langit kiamat! Kembali ke titik aman.',
+              lava_rain: 'Terkena jatuhan Hujan Lava pijar! Kembali ke titik aman.',
+              flood:
+                world.selectedMap === 'lava'
+                  ? 'Tersapu naiknya Banjir Lava kaldera! Kembali ke titik aman.'
+                  : 'Terseret arus Banjir Bandang! Kembali ke titik aman.',
+            };
+            triggerStudentFall(messages[hitBy] || 'Terkena rintangan gunung! Kembali ke titik aman.');
+          }
         }
 
-        // Smooth Third-Person Chase Camera (+ Earthquake/Landslide Shake)
-        _camTarget.set(g.pos.x, g.pos.y + 2.1, g.pos.z);
+        // Smooth Third-Person Chase Camera (+ Peer Spectate Mode & Earthquake/Landslide Shake)
+        spectatedEntry = spectatingIdRef.current
+          ? world.remotePlayers.get(spectatingIdRef.current)
+          : undefined;
+        if (spectatedEntry) {
+          _camTarget.set(
+            spectatedEntry.mesh.position.x,
+            spectatedEntry.mesh.position.y + 2.1,
+            spectatedEntry.mesh.position.z,
+          );
+        } else {
+          _camTarget.set(g.pos.x, g.pos.y + 2.1, g.pos.z);
+        }
         const horiz = Math.cos(g.camPitch) * g.camDist;
         const vert = Math.sin(g.camPitch) * g.camDist;
         const cx = _camTarget.x + Math.sin(g.camYaw) * horiz;
@@ -3052,7 +3608,9 @@ export function App() {
             ? Math.max(groundAtCam + 1.25, _camTarget.y + vert)
             : _camTarget.y + vert;
         _camDesired.set(cx, cy, cz);
+        world.resolveCameraCollision(_camTarget, _camDesired, 2.2);
         world.camera.position.lerp(_camDesired, 1 - Math.exp(-9.5 * dt));
+        world.resolveCameraCollision(_camTarget, world.camera.position, 2.2);
         if (shakeIntensity > 0) {
           world.camera.position.x += (Math.random() - 0.5) * shakeIntensity * 1.15;
           world.camera.position.y += (Math.random() - 0.5) * shakeIntensity * 0.85;
@@ -3060,9 +3618,10 @@ export function App() {
         world.camera.lookAt(_camTarget.x, _camTarget.y + 0.55, _camTarget.z);
 
         // Ambient Nature Audio (Wind, River/Waterfall, Birds, Crickets) & Throttled HUD Sync
-        const minY = 4.0;
-        const maxY = SUMMIT_EXAM_POINT.y;
-        const altPct = Math.max(0, Math.min(100, Math.round(((g.pos.y - minY) / (maxY - minY)) * 100)));
+        const summitPt = world.getSummitPoint();
+        const minY = world.getCpPoint(0).y;
+        const maxY = summitPt.y;
+        const altPct = Math.max(0, Math.min(100, Math.round(((g.pos.y - minY) / Math.max(1, maxY - minY)) * 100)));
         sound.updateAmbience(
           altPct,
           world.weather,
@@ -3073,7 +3632,7 @@ export function App() {
         if (now - g.lastHudSync > 250) {
           g.lastHudSync = now;
           const nextIdx = g.currentCP >= 25 && !g.essayDone ? 26 : Math.min(25, g.currentCP + 1);
-          const target = nextIdx >= 26 ? SUMMIT_EXAM_POINT : CP_POINTS[nextIdx];
+          const target = nextIdx >= 26 ? summitPt : world.getCpPoint(nextIdx);
           const dx = target.x - g.pos.x;
           const dz = target.z - g.pos.z;
           const dist = Math.round(Math.hypot(dx, dz));
@@ -3082,6 +3641,12 @@ export function App() {
           const camLookAngle = g.camYaw + Math.PI;
           const relAngleDeg = THREE.MathUtils.radToDeg(camLookAngle - worldAngle);
           const radarData = world.collectRadarData(g.pos, g.camYaw, nextIdx);
+
+          const nextFrost = g.role === 'student' && (g.chillSlowTimer > 0 || world.isFrostSlowActive());
+          if (nextFrost !== frostActiveRef.current) {
+            frostActiveRef.current = nextFrost;
+            setFrostActive(nextFrost);
+          }
 
           setHud({
             altitudePct: altPct,
@@ -3097,11 +3662,17 @@ export function App() {
 
         // Pose sync is handled cleanly on 250ms movement-delta interval in Supabase channel useEffect
       } else {
-        // Sweeping scenic camera orbiting the Stepped Cliff Islands & Wooden Suspension Bridges while in Lobby
+        // Sweeping scenic camera orbiting the mountain ridge & bridges while in Lobby
         const camAngle = elapsed * 0.1;
-        world.camera.position.set(Math.sin(camAngle) * 235, 195, Math.cos(camAngle) * 235);
-        world.camera.lookAt(0, 125, 0);
-        world.updateVisuals(dt, elapsed, _camTarget.set(0, 125, 0), sound, true);
+        if (world.selectedMap === 'nusantara') {
+          world.camera.position.set(Math.sin(camAngle) * 660, 290, -920 + Math.cos(camAngle) * 660);
+          world.camera.lookAt(0, 130, -920);
+          world.updateVisuals(dt, elapsed, _camTarget.set(0, 130, -920), sound, true);
+        } else {
+          world.camera.position.set(Math.sin(camAngle) * 440, 325, Math.cos(camAngle) * 440);
+          world.camera.lookAt(0, 210, 0);
+          world.updateVisuals(dt, elapsed, _camTarget.set(0, 210, 0), sound, true);
+        }
       }
 
       world.render();
@@ -3135,6 +3706,19 @@ export function App() {
         e.preventDefault();
       }
       if (
+        e.code === 'KeyF' &&
+        !e.repeat &&
+        gameRef.current.inGame &&
+        gameRef.current.role === 'teacher' &&
+        !gameRef.current.activeQuiz &&
+        !gameRef.current.essayActive &&
+        !gameRef.current.sessionEnded
+      ) {
+        e.preventDefault();
+        toggleTeacherFlyRef.current();
+        return;
+      }
+      if (
         e.code === 'Space' &&
         gameRef.current.inGame &&
         (gameRef.current.role === 'teacher' || gameRef.current.roomStatus === 'started') &&
@@ -3143,7 +3727,9 @@ export function App() {
         !gameRef.current.paused
       ) {
         e.preventDefault();
-        tryJump();
+        if (!(gameRef.current.role === 'teacher' && gameRef.current.flyMode)) {
+          tryJump();
+        }
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -3292,16 +3878,22 @@ export function App() {
 
     const cleanName = sanitizeName(teacherName) || 'Guru Pemantau';
     const dur = Math.min(60, Math.max(5, Number(initQuizDuration) || 30));
-    const durSession = [10, 15, 20, 25, 30].includes(Number(initSessionDuration))
+    const durSession = [10, 15, 20, 25, 30, 40, 45, 50, 60].includes(Number(initSessionDuration))
       ? Number(initSessionDuration)
-      : Math.min(30, Math.max(10, Number(initSessionDuration) || 20));
+      : Math.min(60, Math.max(10, Number(initSessionDuration) || 20));
     const durExplain = Math.min(60, Math.max(5, Number(initExplanationDuration) || 45));
 
     const generatedCode = generateRoomCode();
     const teacherId = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const resolvedMap: MapThemeId =
+      initSelectedMap === 'random'
+        ? MAP_THEMES[Math.floor(Math.random() * MAP_THEMES.length)].id
+        : initSelectedMap;
+    const initStages = getMapLayout(resolvedMap).stages;
     const roomSettings: RoomSettings = {
       timeOfDay: 'pagi',
       weather: 'cerah',
+      selectedMap: resolvedMap,
       quizDuration: dur,
       sessionDurationMinutes: durSession,
       explanationDurationSec: durExplain,
@@ -3319,10 +3911,10 @@ export function App() {
       teacherName: cleanName,
       teacherAvatar: { ...avatar },
       teacherPose: {
-        x: CP_POINTS[0].x,
-        y: CP_POINTS[0].y,
-        z: CP_POINTS[0].z,
-        yaw: Math.atan2(CP_POINTS[1].x - CP_POINTS[0].x, CP_POINTS[1].z - CP_POINTS[0].z),
+        x: initStages[0].x,
+        y: initStages[0].y,
+        z: initStages[0].z,
+        yaw: Math.atan2(initStages[1].x - initStages[0].x, initStages[1].z - initStages[0].z),
         cp: 0,
         state: 'idle',
       },
@@ -3357,6 +3949,9 @@ export function App() {
       g.clientId = teacherId;
       g.sessionEnded = false;
       g.paused = false;
+      g.flyMode = false;
+      g.flyVerticalDir = 0;
+      setTeacherFlyMode(false);
 
       hostRoomRef.current = hostRoom;
       remainingSecRef.current = initialSec;
@@ -3369,8 +3964,11 @@ export function App() {
 
       enterGameWorld(getHostPublicRoomState(hostRoom), hostRoom.questions, hostRoom.essayQuestions);
       subscribeRoomChannel(generatedCode);
+      const chosenMapName = MAP_THEMES.find((m) => m.id === resolvedMap)?.name || resolvedMap;
       showToastSuccess(
-        `Ruangan ${generatedCode} siap (Lobi Kelas). Tunggu siswa masuk lalu tekan Mulai Ekspedisi!`,
+        initSelectedMap === 'random'
+          ? `Ruangan ${generatedCode} siap (Acak terpilih: ${chosenMapName})! Tunggu siswa masuk lalu tekan Mulai Ekspedisi!`
+          : `Ruangan ${generatedCode} siap (Lobi Kelas). Tunggu siswa masuk lalu tekan Mulai Ekspedisi!`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -3408,7 +4006,10 @@ export function App() {
     let saved: StudentRestoreProgress | null = null;
     if (savedRaw) {
       try {
-        saved = JSON.parse(savedRaw);
+        const parsed = JSON.parse(savedRaw) as StudentRestoreProgress;
+        if (parsed && parsed.studentName && parsed.studentName.trim().toLowerCase() === cleanName.toLowerCase()) {
+          saved = parsed;
+        }
       } catch {
         saved = null;
       }
@@ -3417,7 +4018,8 @@ export function App() {
     const studentId =
       saved && saved.studentId
         ? saved.studentId
-        : `stu_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        : nextShiftStudentIdRef.current || createEventId();
+    nextShiftStudentIdRef.current = '';
 
     const g = gameRef.current;
     g.role = 'student';
@@ -3447,16 +4049,37 @@ export function App() {
         g.fallCount = typeof saved.fallCount === 'number' ? saved.fallCount : 0;
         g.answers = Array.isArray(saved.answers) ? saved.answers : [];
         g.essayAnswers = Array.isArray(saved.essayAnswers) ? saved.essayAnswers : [];
+      } else {
+        g.currentCP = 0;
+        g.completedCPs = [];
+        g.score = 0;
+        g.correctCount = 0;
+        g.wrongCount = 0;
+        g.essayCorrect = 0;
+        g.essayWrong = 0;
+        g.essayDone = false;
+        g.fallCount = 0;
+        g.bridgeAttemptMode = 'none';
+        g.answers = [];
+        g.essayAnswers = [];
       }
       const totalSec = (standalonePacket.settings.sessionDurationMinutes || 20) * 60;
-      remainingSecRef.current = totalSec;
+      sessionDurationMinRef.current = standalonePacket.settings.sessionDurationMinutes || 20;
+      const studentRem =
+        saved && typeof saved.remainingSec === 'number'
+          ? Math.max(0, Math.min(totalSec, Math.round(saved.remainingSec)))
+          : totalSec;
+      remainingSecRef.current = studentRem;
+      studentStartedAtRef.current =
+        saved && typeof saved.studentStartedAt === 'number' ? saved.studentStartedAt : Date.now();
+      joinedAtRef.current = studentStartedAtRef.current;
       const standaloneState: PublicRoomState = {
         roomCode: effectiveCode,
         status: 'started',
         settings: standalonePacket.settings,
         paused: false,
         sessionEnded: false,
-        remainingSec: totalSec,
+        remainingSec: studentRem,
         questionCount: standalonePacket.questions?.length || 25,
         essayQuestionCount: standalonePacket.essayQuestions?.length || 5,
         participants: [],
@@ -3502,18 +4125,33 @@ export function App() {
         g.fallCount = typeof saved.fallCount === 'number' ? saved.fallCount : 0;
         g.answers = Array.isArray(saved.answers) ? saved.answers : [];
         g.essayAnswers = Array.isArray(saved.essayAnswers) ? saved.essayAnswers : [];
+      } else {
+        g.currentCP = 0;
+        g.completedCPs = [];
+        g.score = 0;
+        g.correctCount = 0;
+        g.wrongCount = 0;
+        g.essayCorrect = 0;
+        g.essayWrong = 0;
+        g.essayDone = false;
+        g.fallCount = 0;
+        g.answers = [];
+        g.essayAnswers = [];
       }
+      g.bridgeAttemptMode = 'none';
 
       const initialStatus: RoomStatus = config.status === 'waiting' ? 'waiting' : 'started';
-      const fallbackRem =
-        typeof config.remainingSec === 'number'
-          ? config.remainingSec
-          : (config.settings?.sessionDurationMinutes || 20) * 60;
-      const computedRem =
-        initialStatus === 'started' && config.sessionEndsAt && !config.paused
-          ? Math.max(0, Math.round((config.sessionEndsAt - Date.now()) / 1000))
-          : Math.max(0, Math.round(fallbackRem));
-      remainingSecRef.current = computedRem;
+      const durMin = config.settings?.sessionDurationMinutes || 20;
+      sessionDurationMinRef.current = durMin;
+      const fullStudentSec = durMin * 60;
+      const studentRem =
+        saved && typeof saved.remainingSec === 'number'
+          ? Math.max(0, Math.min(fullStudentSec, Math.round(saved.remainingSec)))
+          : fullStudentSec;
+      remainingSecRef.current = studentRem;
+      studentStartedAtRef.current =
+        saved && typeof saved.studentStartedAt === 'number' ? saved.studentStartedAt : Date.now();
+      joinedAtRef.current = studentStartedAtRef.current;
 
       const roomState: PublicRoomState = {
         roomCode: effectiveCode,
@@ -3521,7 +4159,7 @@ export function App() {
         settings: config.settings,
         paused: Boolean(config.paused),
         sessionEnded: Boolean(config.sessionEnded),
-        remainingSec: computedRem,
+        remainingSec: studentRem,
         questionCount: config.questions?.length || 25,
         essayQuestionCount: config.essayQuestions?.length || 5,
         participants: [],
@@ -3540,7 +4178,14 @@ export function App() {
           avatar: normalizeAvatarConfig(config.teacherAvatar, 'teacher'),
           currentCP: 0,
           score: 0,
-          pose: { x: CP_POINTS[0].x, y: CP_POINTS[0].y, z: CP_POINTS[0].z, yaw: 0, cp: 0, state: 'idle' },
+          pose: {
+            x: worldRef.current?.getCpPoint(0).x ?? CP_POINTS[0].x,
+            y: worldRef.current?.getCpPoint(0).y ?? CP_POINTS[0].y,
+            z: worldRef.current?.getCpPoint(0).z ?? CP_POINTS[0].z,
+            yaw: 0,
+            cp: 0,
+            state: 'idle',
+          },
         });
       }
 
@@ -3578,7 +4223,7 @@ export function App() {
       partial.sessionDurationMinutes !== settings.sessionDurationMinutes &&
       !gameRef.current.sessionEnded
     ) {
-      const nextMin = Math.min(30, Math.max(10, Math.round(partial.sessionDurationMinutes)));
+      const nextMin = Math.min(60, Math.max(10, Math.round(partial.sessionDurationMinutes)));
       merged.sessionDurationMinutes = nextMin;
       const elapsed = Math.max(0, prevTotal - remainingSecRef.current);
       const nextRem = Math.max(15, nextMin * 60 - elapsed);
@@ -3602,9 +4247,29 @@ export function App() {
     if (room) {
       room.settings = merged;
       sendRoomBroadcast(channelRef.current, { type: 'settings_updated', settings: merged });
-      void upsertSupabaseRoom(room.code, buildSupabaseRoomConfig(room)).catch((err) => {
-        showWarning(`Gagal sinkron pengaturan ke Supabase: ${err instanceof Error ? err.message : String(err)}`, 3.5);
-      });
+      if (partial.selectedMap) {
+        const cmd: RoomCommandPayload = {
+          type: 'CHANGE_MAP',
+          eventId: createEventId(),
+          triggeredAt: Date.now(),
+          duration: 5000,
+          mapId: partial.selectedMap,
+          settings: merged,
+        };
+        sendRoomCommandBroadcast(channelRef.current, cmd);
+        void publishRoomCommandToSupabase(room.code, cmd, buildSupabaseRoomConfig(room)).catch((err) => {
+          showWarning(`Gagal sinkron tema map ke Supabase: ${err instanceof Error ? err.message : String(err)}`, 3.5);
+        });
+      } else {
+        void upsertSupabaseRoom(room.code, buildSupabaseRoomConfig(room)).catch((err) => {
+          showWarning(`Gagal sinkron pengaturan ke Supabase: ${err instanceof Error ? err.message : String(err)}`, 3.5);
+        });
+      }
+    }
+
+    if (partial.selectedMap) {
+      const mapLabel = MAP_THEMES.find((m) => m.id === partial.selectedMap)?.name || partial.selectedMap;
+      showWarning(`Tema Map 3D diubah ke ${mapLabel.toUpperCase()} untuk seluruh siswa!`, 2.6);
     }
 
     if (partial.weather) {
@@ -3810,14 +4475,16 @@ export function App() {
     const g = gameRef.current;
     const world = worldRef.current;
     if (g.role !== 'teacher' || !world) return;
-    const cp = cpIndex >= 26 ? SUMMIT_EXAM_POINT : CP_POINTS[Math.min(25, Math.max(0, cpIndex))];
-    const nextCP = cp.index >= 25 ? SUMMIT_EXAM_POINT : CP_POINTS[cp.index + 1];
+    const cp = cpIndex >= 26 ? world.getSummitPoint() : world.getCpPoint(Math.min(25, Math.max(0, cpIndex)));
+    const nextCP = cp.index >= 25 ? world.getSummitPoint() : world.getCpPoint(cp.index + 1);
+    const cp25 = world.getCpPoint(25);
     g.currentCP = cp.index;
     g.pos.set(cp.x, world.getGroundHeight(cp.x, cp.z), cp.z);
     g.vel.set(0, 0, 0);
+    g.onGround = true;
     g.yaw =
       cp.index >= 26
-        ? Math.atan2(CP_POINTS[25].x - cp.x, CP_POINTS[25].z - cp.z) + Math.PI
+        ? Math.atan2(cp25.x - cp.x, cp25.z - cp.z) + Math.PI
         : Math.atan2(nextCP.x - cp.x, nextCP.z - cp.z);
     setCurrentCP(Math.min(25, cp.index));
     resetCameraBehindPlayer();
@@ -3831,20 +4498,32 @@ export function App() {
       eventType === 'fire_rain' ||
       eventType === 'landslide' ||
       eventType === 'wildfire';
-    const count = isGhost ? 3 : isStormParticle ? 50 : undefined;
+    const count = isGhost ? 3 : eventType === 'yeti' ? 3 : isStormParticle ? 50 : eventType === 'brainrot' ? 4 : undefined;
     const offsets = isGhost ? [9, 15, 21] : undefined;
+    const durationMs =
+      eventType === 'flash_flood' ||
+      eventType === 'lava_rain' ||
+      eventType === 'lava_landslide' ||
+      eventType === 'lava_flood' ||
+      eventType === 'landslide' ||
+      eventType === 'yeti' ||
+      eventType === 'snowstorm'
+        ? 7000
+        : eventType === 'brainrot'
+          ? 6000
+          : 5000;
     const nowMs = Date.now();
     const cmd: RoomCommandPayload = {
       type: eventType,
       eventId: createEventId(),
       triggeredAt: nowMs,
-      duration: 5000,
+      duration: durationMs,
       count,
       offsets,
     };
 
     handleTeacherEvent(eventType, {
-      durationMs: 5000,
+      durationMs,
       timestamp: nowMs,
       count,
       offsets,
@@ -3965,6 +4644,148 @@ export function App() {
     window.location.href = window.location.pathname;
   };
 
+  const handleNextStudentShift = useCallback(() => {
+    const g = gameRef.current;
+    const preservedRoomCode = g.roomCode || roomCode || roomCodeInput;
+
+    // 1. Flush final progress of the current student so Teacher & Supabase keep their scores intact
+    if (g.role === 'student' && g.clientId && !isStandaloneMode) {
+      emitStudentProgress();
+    }
+
+    // 2. Disconnect current student channel cleanly without deleting their record at Teacher
+    cleanupChannel();
+
+    // 3. Free temporary WebGL meshes, textures, sprites, and render lists for smooth 60 FPS shift turns
+    const world = worldRef.current;
+    if (world) {
+      if (g.playerMesh) {
+        world.scene.remove(g.playerMesh);
+        disposeAvatarGroup(g.playerMesh);
+        g.playerMesh = null;
+        g.headLamp = null;
+      }
+      world.resetForNextStudentShift();
+    }
+
+    // 4. Purge all previous student's localStorage & sessionStorage entries (keep room code)
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('wowo_peak_session_') || k === 'wowo_peak_last_room' || k === 'wowo_peak_avatar_student')) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch {
+      // ignore storage access issues
+    }
+    try {
+      sessionStorage.clear();
+    } catch {
+      // ignore storage access issues
+    }
+
+    // 5. Generate a fresh unique playerId via crypto.randomUUID() for the next student
+    const freshPlayerId = createEventId();
+    nextShiftStudentIdRef.current = freshPlayerId;
+
+    // 6. Reset timer & all mutable gameRef state back to Base Camp (CP 0) for the incoming student
+    if (timeoutFallbackRef.current) {
+      window.clearTimeout(timeoutFallbackRef.current);
+      timeoutFallbackRef.current = null;
+    }
+    const fullSec = (sessionDurationMinRef.current || settings.sessionDurationMinutes || 20) * 60;
+    remainingSecRef.current = fullSec;
+    setRemainingSec(fullSec);
+    studentStartedAtRef.current = Date.now();
+    joinedAtRef.current = studentStartedAtRef.current;
+
+    const cp0 = world?.getCpPoint(0) ?? CP_POINTS[0];
+    const cp1 = world?.getCpPoint(1) ?? CP_POINTS[1];
+    const startYaw = Math.atan2(cp1.x - cp0.x, cp1.z - cp0.z);
+    g.inGame = false;
+    g.role = 'student';
+    g.roomCode = preservedRoomCode;
+    g.roomStatus = 'waiting';
+    g.clientId = freshPlayerId;
+    g.name = '';
+    g.avatar = { ...DEFAULT_STUDENT_AVATAR };
+    g.paused = false;
+    g.sessionEnded = false;
+    g.currentCP = 0;
+    g.completedCPs = [];
+    g.score = 0;
+    g.correctCount = 0;
+    g.wrongCount = 0;
+    g.essayCorrect = 0;
+    g.essayWrong = 0;
+    g.essayDone = false;
+    g.essayActive = false;
+    g.essayFeedbackOpen = false;
+    g.essayExplainLeft = 0;
+    g.essayIsLastPending = false;
+    g.essayAnswers = [];
+    g.fallCount = 0;
+    g.bridgeAttemptMode = 'none';
+    g.answers = [];
+    g.studentDeck = [];
+    g.activeQuiz = null;
+    g.pos.set(cp0.x, cp0.y, cp0.z);
+    g.vel.set(0, 0, 0);
+    g.yaw = startYaw;
+    g.camDist = 10.6;
+    g.camPitch = 0.34;
+    g.nextHailIn = 16;
+    g.nextGhostIn = 16;
+    g.onGround = true;
+    g.flyMode = false;
+    g.flyVerticalDir = 0;
+    setTeacherFlyMode(false);
+    g.hurtTimer = 0;
+    g.chillSlowTimer = 0;
+    frostActiveRef.current = false;
+    setFrostActive(false);
+    g.activeEmote = null;
+    g.emoteTimer = 0;
+
+    // 7. Reset UI state back to clean Student Join form with preserved Teacher Room Code
+    spectatingIdRef.current = null;
+    setSpectatingTargetName(null);
+    setInGame(false);
+    setSessionEnded(false);
+    setPaused(false);
+    setShowClassLobby(false);
+    setActiveQuiz(null);
+    setActiveEssayModal(null);
+    setLeaderboard([]);
+    setExportRows([]);
+    setParticipants([]);
+    setCurrentCP(0);
+    setEssayDone(false);
+    setEssayCorrect(0);
+    setScore(0);
+    setFallCount(0);
+    setWarningText('');
+    setReconnectInfo(null);
+    setLobbyError('');
+    setStudentName('');
+    setAvatar({ ...DEFAULT_STUDENT_AVATAR });
+    setAvatarEdited(false);
+    setRole('student');
+    setClientIdState(freshPlayerId);
+    if (preservedRoomCode) {
+      setRoomCodeInput(preservedRoomCode);
+    }
+
+    showToastSuccess(
+      preservedRoomCode
+        ? `Siap untuk siswa berikutnya! Kode ruangan ${preservedRoomCode} sudah terisi otomatis.`
+        : 'Siap untuk siswa berikutnya! Silakan isi nama dan pilih avatar.',
+    );
+  }, [cleanupChannel, emitStudentProgress, isStandaloneMode, roomCode, roomCodeInput, showToastSuccess]);
+
   return (
     <div className="relative w-full h-full overflow-hidden bg-slate-950 select-none">
       {/* Isolated Full-Viewport Three.js WebGL Mount */}
@@ -3975,6 +4796,23 @@ export function App() {
         className="fixed inset-0 z-40 pointer-events-none bg-white transition-opacity duration-150"
         style={{ opacity: lightningOpacity }}
       />
+
+      {/* Lightweight Ice/Blizzard Frost Screen Vignette (No backdrop-filter for 60 FPS) */}
+      {inGame && frostActive && !sessionEnded && (
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 z-20 pointer-events-none transition-opacity duration-300"
+          style={{
+            background:
+              'radial-gradient(circle at center, rgba(186,230,253,0) 56%, rgba(125,211,252,0.28) 84%, rgba(224,242,254,0.52) 100%)',
+            boxShadow: 'inset 0 0 42px rgba(186,230,253,0.45)',
+          }}
+        >
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg bg-sky-950/85 border border-cyan-300/60 text-cyan-100 text-[11px] font-bold tracking-wide shadow">
+            Efek Beku Salju: Kecepatan Jalan 0.55x
+          </div>
+        </div>
+      )}
 
       {/* Global Green Import Toast */}
       {toastMsg && (
@@ -4007,6 +4845,8 @@ export function App() {
           onChangeInitSessionDuration={setInitSessionDuration}
           initExplanationDuration={initExplanationDuration}
           onChangeInitExplanationDuration={setInitExplanationDuration}
+          initSelectedMap={initSelectedMap}
+          onChangeInitSelectedMap={setInitSelectedMap}
           customQuestions={customQuestions}
           pgFileName={pgFileName}
           onChangeCustomQuestions={handleLobbyCustomQuestionsChange}
@@ -4098,6 +4938,24 @@ export function App() {
             });
           }}
           onFinishStandalone={() => applySessionEnded('teacher')}
+          spectatingTargetName={spectatingTargetName}
+          canSpectatePeers={!isStandaloneMode}
+          onCycleSpectate={cycleSpectateTarget}
+          onStopSpectate={stopSpectate}
+          onNextStudentShift={role === 'student' ? handleNextStudentShift : undefined}
+          teacherFlyMode={teacherFlyMode}
+          onToggleTeacherFly={handleToggleTeacherFly}
+          onFlyVerticalChange={(dir) => {
+            gameRef.current.flyVerticalDir = dir;
+          }}
+          photoMode={photoMode}
+          photoSelfie={photoSelfie}
+          capturedPhotoUrl={capturedPhotoUrl}
+          playerName={gameRef.current.name || (role === 'teacher' ? teacherName : studentName)}
+          onTogglePhotoMode={handleTogglePhotoMode}
+          onTogglePhotoAngle={handleTogglePhotoAngle}
+          onCapturePhoto={handleCapturePhoto}
+          onClosePhotoPreview={handleClosePhotoPreview}
         />
       )}
 
@@ -4199,6 +5057,7 @@ export function App() {
           pgWeight={settings.pgWeight}
           essayWeight={settings.essayWeight}
           onBackToLobby={handleBackToLobby}
+          onNextStudentShift={role === 'student' ? handleNextStudentShift : undefined}
         />
       )}
     </div>

@@ -2,7 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   BatteryCharging,
+  Brain,
   Camera,
   Check,
   CheckCircle2,
@@ -16,15 +19,20 @@ import {
   Download,
   Eye,
   EyeOff,
+  Feather,
   FileSpreadsheet,
   Flame,
   Ghost,
+  GripVertical,
   Link2,
   MapPin,
+  Maximize2,
+  Minimize2,
   Mountain,
   Pause,
   PawPrint,
   Play,
+  RefreshCw,
   RotateCcw,
   Smile,
   Snowflake,
@@ -32,20 +40,25 @@ import {
   Trophy,
   Upload,
   UserCog,
+  UserPlus,
   Users,
   UserX,
   Volume2,
   VolumeX,
+  Waves,
+  X,
   Zap,
 } from 'lucide-react';
 import {
   DIFFICULTY_LEVELS,
   EMOTE_ITEMS,
+  MAP_THEMES,
   type AvatarConfig,
   type DisasterEventType,
   type EmoteType,
   type EssayQuestion,
   type HudSnapshot,
+  type MapThemeId,
   type ParticipantSummary,
   type QuizQuestion,
   type RespawnMode,
@@ -109,6 +122,22 @@ interface GameHudProps {
   isStandaloneMode?: boolean;
   onBuildStandaloneLink?: () => string;
   onFinishStandalone?: () => void;
+  spectatingTargetName?: string | null;
+  canSpectatePeers?: boolean;
+  onCycleSpectate?: () => void;
+  onStopSpectate?: () => void;
+  onNextStudentShift?: () => void;
+  teacherFlyMode?: boolean;
+  onToggleTeacherFly?: () => void;
+  onFlyVerticalChange?: (dir: -1 | 0 | 1) => void;
+  photoMode?: boolean;
+  photoSelfie?: boolean;
+  capturedPhotoUrl?: string | null;
+  playerName?: string;
+  onTogglePhotoMode?: () => void;
+  onTogglePhotoAngle?: () => void;
+  onCapturePhoto?: () => void;
+  onClosePhotoPreview?: () => void;
 }
 
 const TIME_LABELS: Record<TimeOfDay, string> = {
@@ -178,6 +207,22 @@ export const GameHud: React.FC<GameHudProps> = ({
   isStandaloneMode = false,
   onBuildStandaloneLink,
   onFinishStandalone,
+  spectatingTargetName = null,
+  canSpectatePeers = false,
+  onCycleSpectate,
+  onStopSpectate,
+  onNextStudentShift,
+  teacherFlyMode = false,
+  onToggleTeacherFly,
+  onFlyVerticalChange,
+  photoMode = false,
+  photoSelfie = false,
+  capturedPhotoUrl = null,
+  playerName = 'Pendaki',
+  onTogglePhotoMode,
+  onTogglePhotoAngle,
+  onCapturePhoto,
+  onClosePhotoPreview,
 }) => {
   const [isCompactMobile, setIsCompactMobile] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 900 || window.innerHeight < 500 : false,
@@ -185,6 +230,23 @@ export const GameHud: React.FC<GameHudProps> = ({
   const [controlsOpen, setControlsOpen] = useState<boolean>(() =>
     typeof window !== 'undefined' ? !(window.innerWidth < 900 || window.innerHeight < 500) : true,
   );
+  const [teacherDockCollapsed, setTeacherDockCollapsed] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false,
+  );
+  const [teacherDockPos, setTeacherDockPos] = useState<{ x: number; y: number }>(() => {
+    if (typeof window === 'undefined') return { x: 12, y: 68 };
+    const compact = window.innerWidth < 900 || window.innerHeight < 500;
+    const widthGuess = window.innerWidth < 768 ? 176 : 284;
+    return {
+      x: Math.max(8, window.innerWidth - widthGuess - 10),
+      y: compact ? 48 : 68,
+    };
+  });
+  const teacherDockRef = useRef<HTMLDivElement | null>(null);
+  const teacherDockPosRef = useRef(teacherDockPos);
+  teacherDockPosRef.current = teacherDockPos;
+  const dockDragMovedRef = useRef(false);
+
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedStandalone, setCopiedStandalone] = useState(false);
   const [teleportTarget, setTeleportTarget] = useState(0);
@@ -199,6 +261,14 @@ export const GameHud: React.FC<GameHudProps> = ({
   const [excelModalOpen, setExcelModalOpen] = useState(false);
   const [excelStatus, setExcelStatus] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [draftAvatar, setDraftAvatar] = useState<AvatarConfig>(avatar);
+  const [confirmNextShift, setConfirmNextShift] = useState(false);
+  const [summitCardDismissed, setSummitCardDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!essayDone) {
+      setSummitCardDismissed(false);
+    }
+  }, [essayDone]);
 
   const excelInputRef = useRef<HTMLInputElement | null>(null);
   const essayExcelInputRef = useRef<HTMLInputElement | null>(null);
@@ -207,9 +277,22 @@ export const GameHud: React.FC<GameHudProps> = ({
   const lastTouchJumpAtRef = useRef<number>(0);
   const [knobOffset, setKnobOffset] = useState({ x: 0, y: 0 });
 
+  const clampDockToViewport = (x: number, y: number) => {
+    const el = teacherDockRef.current;
+    const w = el ? el.offsetWidth : 280;
+    const h = el ? el.offsetHeight : 60;
+    const maxX = Math.max(8, window.innerWidth - w - 8);
+    const maxY = Math.max(8, window.innerHeight - h - 8);
+    return {
+      x: Math.max(8, Math.min(maxX, x)),
+      y: Math.max(8, Math.min(maxY, y)),
+    };
+  };
+
   useEffect(() => {
     const updateViewport = () => {
       setIsCompactMobile(window.innerWidth < 900 || window.innerHeight < 500);
+      setTeacherDockPos((prev) => clampDockToViewport(prev.x, prev.y));
     };
     updateViewport();
     window.addEventListener('resize', updateViewport);
@@ -220,7 +303,85 @@ export const GameHud: React.FC<GameHudProps> = ({
     };
   }, []);
 
+  useEffect(() => {
+    if (role !== 'teacher') return;
+    const id = window.requestAnimationFrame(() => {
+      setTeacherDockPos((prev) => clampDockToViewport(prev.x, prev.y));
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [teacherDockCollapsed, role]);
+
+  const startDockDragMouse = (e: React.MouseEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const originX = teacherDockPosRef.current.x;
+    const originY = teacherDockPosRef.current.y;
+    let latestPos = { x: originX, y: originY };
+    dockDragMovedRef.current = false;
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startClientX;
+      const dy = ev.clientY - startClientY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dockDragMovedRef.current = true;
+      latestPos = clampDockToViewport(originX + dx, originY + dy);
+      if (teacherDockRef.current) {
+        teacherDockRef.current.style.transform = `translate3d(${latestPos.x}px, ${latestPos.y}px, 0)`;
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      teacherDockPosRef.current = latestPos;
+      setTeacherDockPos(latestPos);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const startDockDragTouch = (e: React.TouchEvent<HTMLElement>) => {
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    e.stopPropagation();
+    const touchId = touch.identifier;
+    const startClientX = touch.clientX;
+    const startClientY = touch.clientY;
+    const originX = teacherDockPosRef.current.x;
+    const originY = teacherDockPosRef.current.y;
+    let latestPos = { x: originX, y: originY };
+    dockDragMovedRef.current = false;
+
+    const onMove = (ev: TouchEvent) => {
+      const t = Array.from(ev.touches).find((item) => item.identifier === touchId);
+      if (!t) return;
+      ev.preventDefault();
+      const dx = t.clientX - startClientX;
+      const dy = t.clientY - startClientY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dockDragMovedRef.current = true;
+      latestPos = clampDockToViewport(originX + dx, originY + dy);
+      if (teacherDockRef.current) {
+        teacherDockRef.current.style.transform = `translate3d(${latestPos.x}px, ${latestPos.y}px, 0)`;
+      }
+    };
+    const onEnd = (ev: TouchEvent) => {
+      const ended = Array.from(ev.changedTouches).some((item) => item.identifier === touchId);
+      if (!ended) return;
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchcancel', onEnd);
+      teacherDockPosRef.current = latestPos;
+      setTeacherDockPos(latestPos);
+    };
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+    window.addEventListener('touchcancel', onEnd);
+  };
+
   const levelInfo = DIFFICULTY_LEVELS[settings.difficultyLevel] || DIFFICULTY_LEVELS[3];
+  const currentMapMeta =
+    MAP_THEMES.find((m) => m.id === (settings.selectedMap || 'nusantara')) || MAP_THEMES[0];
   const safeRem = Math.max(0, Math.floor(remainingSec));
   const remMM = Math.floor(safeRem / 60)
     .toString()
@@ -359,8 +520,10 @@ export const GameHud: React.FC<GameHudProps> = ({
 
   return (
     <div className="fixed inset-0 z-20 pointer-events-none select-none">
-      {/* TOP HEADER BAR */}
-      {isCompactMobile ? (
+      {!photoMode && (
+        <>
+          {/* TOP HEADER BAR */}
+          {isCompactMobile ? (
         <header
           onPointerDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
@@ -420,6 +583,43 @@ export const GameHud: React.FC<GameHudProps> = ({
                 <Zap className="w-3.5 h-3.5 text-amber-400" />
               )}
             </button>
+            {role === 'teacher' && onToggleTeacherFly && (
+              <button
+                type="button"
+                onClick={onToggleTeacherFly}
+                className={`inline-flex items-center gap-1 px-1.5 py-1 rounded-md border text-[10px] font-bold cursor-pointer whitespace-nowrap ${
+                  teacherFlyMode
+                    ? 'bg-sky-600 border-sky-300 text-white'
+                    : 'bg-slate-900 border-white/15 text-slate-200'
+                }`}
+                title="Mode Terbang Guru (Shortcut: F)"
+              >
+                <Feather className="w-3 h-3 shrink-0" />
+                <span>{teacherFlyMode ? 'Terbang ON' : 'Terbang'}</span>
+              </button>
+            )}
+            {onTogglePhotoMode && (
+              <button
+                type="button"
+                onClick={onTogglePhotoMode}
+                className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md bg-slate-900 border border-white/15 text-[10px] font-bold text-sky-200 cursor-pointer whitespace-nowrap"
+                title="Mode Foto Ekspedisi"
+              >
+                <Camera className="w-3 h-3 shrink-0 text-amber-300" />
+                <span>Foto</span>
+              </button>
+            )}
+            {role === 'student' && onNextStudentShift && (
+              <button
+                type="button"
+                onClick={() => setConfirmNextShift(true)}
+                className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md bg-amber-600 hover:bg-amber-500 text-[10px] font-bold text-white cursor-pointer whitespace-nowrap"
+                title="Ganti Siswa (Giliran Berikutnya)"
+              >
+                <UserPlus className="w-3 h-3 shrink-0" />
+                <span>Ganti</span>
+              </button>
+            )}
           </div>
         </header>
       ) : (
@@ -498,10 +698,40 @@ export const GameHud: React.FC<GameHudProps> = ({
             )}
 
             <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-300 pr-2 border-r border-white/10 whitespace-nowrap">
+              <span className="text-sky-300 font-semibold">{currentMapMeta.shortName}</span>
+              <span aria-hidden="true">·</span>
               <span>{TIME_LABELS[settings.timeOfDay]}</span>
               <span aria-hidden="true">·</span>
               <span>{WEATHER_LABELS[settings.weather] || settings.weather}</span>
             </div>
+
+            {role === 'teacher' && onToggleTeacherFly && (
+              <button
+                type="button"
+                onClick={onToggleTeacherFly}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold cursor-pointer whitespace-nowrap transition-colors ${
+                  teacherFlyMode
+                    ? 'bg-sky-600 hover:bg-sky-500 border-sky-300/70 text-white shadow'
+                    : 'bg-slate-900 hover:bg-slate-800 border-white/15 text-slate-100'
+                }`}
+                title="Aktifkan/Matikan Mode Terbang Bebas Guru (Tombol F)"
+              >
+                <Feather className="w-3.5 h-3.5 shrink-0" />
+                <span>Terbang: {teacherFlyMode ? 'ON' : 'OFF'} (F)</span>
+              </button>
+            )}
+
+            {role === 'teacher' && onTogglePhotoMode && (
+              <button
+                type="button"
+                onClick={onTogglePhotoMode}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/15 text-xs font-bold text-slate-100 cursor-pointer whitespace-nowrap transition-colors"
+                title="Buka Mode Foto Ekspedisi (Screenshot / Selfie)"
+              >
+                <Camera className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                <span>Foto</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -530,6 +760,18 @@ export const GameHud: React.FC<GameHudProps> = ({
               )}
               <span className="hidden lg:inline">{lowGraphics ? 'Ringan' : 'Normal'}</span>
             </button>
+
+            {role === 'student' && onNextStudentShift && (
+              <button
+                type="button"
+                onClick={() => setConfirmNextShift(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 border border-amber-300/40 text-xs font-bold text-white cursor-pointer whitespace-nowrap"
+                title="Ganti Siswa (Giliran Berikutnya)"
+              >
+                <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                <span>Ganti Siswa</span>
+              </button>
+            )}
           </div>
         </header>
       )}
@@ -606,9 +848,11 @@ export const GameHud: React.FC<GameHudProps> = ({
       {/* Warning Toast Banner */}
       {warningText && (
         <div
-          className={`fixed left-1/2 -translate-x-1/2 z-40 rounded-xl bg-red-700/95 border border-red-300/60 text-white font-semibold shadow-xl text-center max-w-[90vw] ${
-            isCompactMobile ? 'top-11 px-3 py-1.5 text-xs' : 'top-16 px-5 py-2.5 text-sm'
-          }`}
+          className={`fixed left-1/2 -translate-x-1/2 z-40 rounded-xl font-semibold shadow-xl text-center max-w-[90vw] border ${
+            warningText.includes('BRAINROT')
+              ? 'bg-gradient-to-r from-purple-900/95 via-fuchsia-800/95 to-purple-900/95 border-fuchsia-300/80 text-fuchsia-50 shadow-[0_0_24px_rgba(192,38,211,0.55)]'
+              : 'bg-red-700/95 border-red-300/60 text-white'
+          } ${isCompactMobile ? 'top-11 px-3 py-1.5 text-xs' : 'top-16 px-5 py-2.5 text-sm'}`}
         >
           {warningText}
         </div>
@@ -625,237 +869,372 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
       )}
 
-      {/* COLLAPSIBLE BOTTOM CONTROL DOCK */}
-      <div
-        onPointerDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        className={`fixed left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-auto touch-none ${
-          isCompactMobile || isTouchDevice
-            ? `bottom-2 ${controlsOpen ? 'z-40' : 'z-30 max-w-[calc(100vw-13.5rem)]'}`
-            : 'bottom-2.5 z-30 max-w-[97vw]'
-        }`}
-      >
-        {/* Collapse / Expand Tab */}
-        <button
-          type="button"
-          onClick={() => {
-            setControlsOpen((v) => !v);
-            setEmoteMenuOpen(false);
-          }}
-          className={`inline-flex items-center gap-1 rounded-t-lg bg-slate-950/92 border border-b-0 border-white/15 font-semibold text-amber-300 hover:text-white cursor-pointer whitespace-nowrap ${
-            isCompactMobile ? 'px-2.5 py-1 text-[10px]' : 'px-3.5 py-1 text-[11px] gap-1.5'
+      {/* Student Summit Spectator Status Bar */}
+      {role === 'student' && spectatingTargetName && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className={`fixed left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-950/92 border border-sky-400/50 shadow-xl pointer-events-auto ${
+            isCompactMobile ? 'top-11 max-w-[95vw]' : 'top-16'
           }`}
         >
-          {controlsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-          <span>{controlsOpen ? 'Sembunyikan Kontrol' : 'Tampilkan Kontrol'}</span>
-        </button>
+          <Eye className="w-4 h-4 text-sky-400 shrink-0" />
+          <span className="text-xs font-semibold text-white whitespace-nowrap truncate max-w-[42vw]">
+            Memantau: <strong className="text-sky-300">{spectatingTargetName}</strong>
+          </span>
+          {onCycleSpectate && (
+            <button
+              type="button"
+              onClick={onCycleSpectate}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-white cursor-pointer whitespace-nowrap"
+            >
+              Ganti Pendaki
+            </button>
+          )}
+          {onStopSpectate && (
+            <button
+              type="button"
+              onClick={onStopSpectate}
+              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-[11px] font-bold text-white cursor-pointer whitespace-nowrap"
+            >
+              Kembali ke Karakterku
+            </button>
+          )}
+        </div>
+      )}
 
-        {controlsOpen && (
-          <div
-            className={`relative rounded-xl bg-slate-950/92 border border-white/15 shadow-2xl space-y-2 ${
-              isCompactMobile || isTouchDevice
-                ? role === 'teacher'
-                  ? 'px-2.5 py-2 max-w-[94vw] max-h-[50vh] overflow-y-auto'
-                  : 'px-2 py-1.5 max-w-[calc(100vw-13.5rem)] max-h-[44vh] overflow-y-auto'
-                : 'px-3 py-2.5 max-w-[97vw]'
-            }`}
-          >
-            {/* Emote Picker Popover */}
-            {emoteMenuOpen && (
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 rounded-xl bg-slate-900 border border-amber-400/50 shadow-2xl flex flex-wrap justify-center gap-1.5 w-[340px] max-w-[92vw]">
-                {EMOTE_ITEMS.map((em) => (
-                  <button
-                    key={em.id}
-                    type="button"
-                    onClick={() => {
-                      onTriggerEmote(em.id);
-                      setEmoteMenuOpen(false);
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-amber-600 text-xs font-semibold text-white cursor-pointer transition-colors"
-                  >
-                    <span>{em.emoji}</span>
-                    <span>{em.label}</span>
-                  </button>
-                ))}
+      {/* Student Summit Completed Card (Non-blocking, dismissible, includes Ganti Siswa Shift Button) */}
+      {role === 'student' && essayDone && !summitCardDismissed && !spectatingTargetName && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className={`fixed right-3 z-30 w-[290px] max-w-[90vw] rounded-2xl bg-slate-950/92 border border-emerald-400/55 p-3.5 shadow-2xl pointer-events-auto space-y-2.5 ${
+            isCompactMobile ? 'top-11' : 'top-16'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+              <div className="text-xs font-extrabold text-emerald-300 tracking-wide">
+                PUNCAK SELESAI!
               </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSummitCardDismissed(true)}
+              className="text-[11px] text-slate-400 hover:text-white cursor-pointer"
+            >
+              Tutup
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-200 leading-relaxed">
+            Nilai dan progresmu sudah tersimpan aman di Guru. Kamu bebas menjelajahi puncak atau
+            langsung bergantian memakai PC ini.
+          </p>
+          <div className="flex flex-col gap-1.5">
+            {onNextStudentShift && (
+              <button
+                type="button"
+                onClick={() => setConfirmNextShift(true)}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white cursor-pointer whitespace-nowrap"
+              >
+                <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                <span>Ganti Siswa (Giliran Berikutnya)</span>
+              </button>
             )}
+            {canSpectatePeers && !isStandaloneMode && onCycleSpectate && (
+              <button
+                type="button"
+                onClick={onCycleSpectate}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-sky-400/40 text-[11px] font-semibold text-sky-200 cursor-pointer whitespace-nowrap"
+              >
+                <Eye className="w-3.5 h-3.5 shrink-0" />
+                <span>Mode Kamera Pantau</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
-            {role === 'teacher' ? (
-              <>
-                {/* ROW 1: Room, Lobby Toggle, Start, Link Siswa, Mode Respawn, Timer Soal, Excel Bank, Pause & End Session */}
-                <div className="flex flex-wrap items-center justify-center gap-1.5">
-                  {onToggleClassLobby && (
-                    <button
-                      type="button"
-                      onClick={onToggleClassLobby}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
-                        showClassLobby
-                          ? 'bg-amber-600 border-amber-400 text-white'
-                          : 'bg-slate-800 hover:bg-slate-700 border-amber-400/35 text-amber-200'
-                      }`}
-                    >
-                      {showClassLobby ? (
-                        <EyeOff className="w-3.5 h-3.5" />
-                      ) : (
-                        <Eye className="w-3.5 h-3.5" />
-                      )}
-                      <span>
-                        {showClassLobby ? 'Sembunyikan Lobi' : `Tampilkan Lobi (${participants.length})`}
-                      </span>
-                    </button>
-                  )}
+      {/* DRAGGABLE & COLLAPSIBLE SIDE FLOATING DOCK FOR TEACHER */}
+      {role === 'teacher' ? (
+        <div
+          ref={teacherDockRef}
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          style={{ transform: `translate3d(${teacherDockPos.x}px, ${teacherDockPos.y}px, 0)` }}
+          className="fixed top-0 left-0 z-30 pointer-events-auto touch-none will-change-transform"
+        >
+          {teacherDockCollapsed ? (
+            <div className="inline-flex items-center rounded-full bg-slate-950/92 border border-amber-400/50 shadow-2xl overflow-hidden">
+              <div
+                onMouseDown={startDockDragMouse}
+                onTouchStart={startDockDragTouch}
+                title="Geser posisi tombol Kontrol Guru"
+                className="pl-3 pr-1.5 py-2 text-amber-300 cursor-grab active:cursor-grabbing touch-none"
+              >
+                <GripVertical className="w-4 h-4" />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (dockDragMovedRef.current) return;
+                  setTeacherDockCollapsed(false);
+                }}
+                className="inline-flex items-center gap-1.5 pr-3.5 py-2 text-xs font-bold text-white hover:text-amber-300 cursor-pointer whitespace-nowrap"
+              >
+                <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                <span>Kontrol Guru</span>
+              </button>
+            </div>
+          ) : (
+            <div className="w-[280px] max-w-[90vw] rounded-2xl bg-slate-950/92 border border-white/15 shadow-2xl flex flex-col overflow-hidden">
+              {/* Drag Handle & Collapse Header */}
+              <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-900/95 border-b border-white/10">
+                <div
+                  onMouseDown={startDockDragMouse}
+                  onTouchStart={startDockDragTouch}
+                  className="flex items-center gap-1.5 flex-1 min-w-0 cursor-grab active:cursor-grabbing touch-none select-none py-0.5"
+                  title="Seret untuk menggeser panel kontrol"
+                >
+                  <GripVertical className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="text-xs font-bold text-white truncate">Kontrol Guru</span>
+                  <span className="text-[10px] text-slate-400">· Geser</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTeacherDockCollapsed(true);
+                    setEmoteMenuOpen(false);
+                  }}
+                  title="Lipat / Sembunyikan Panel"
+                  aria-label="Lipat Panel Kontrol Guru"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-amber-300 hover:text-white cursor-pointer shrink-0"
+                >
+                  <Minimize2 className="w-3.5 h-3.5" />
+                  <span>Lipat</span>
+                </button>
+              </div>
 
+              {/* Scrollable Slim Body */}
+              <div className="p-2.5 space-y-2.5 max-h-[calc(100dvh-118px)] overflow-y-auto overscroll-contain touch-pan-y">
+                {/* Emote Picker Inside Side Dock */}
+                {emoteMenuOpen && (
+                  <div className="p-2 rounded-xl bg-slate-900 border border-amber-400/50 flex flex-wrap justify-center gap-1">
+                    {EMOTE_ITEMS.map((em) => (
+                      <button
+                        key={em.id}
+                        type="button"
+                        onClick={() => {
+                          onTriggerEmote(em.id);
+                          setEmoteMenuOpen(false);
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 hover:bg-amber-600 text-[11px] font-semibold text-white cursor-pointer transition-colors"
+                      >
+                        <span>{em.emoji}</span>
+                        <span>{em.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Section 1: Lobby & Session Flow */}
+                <div className="space-y-1.5">
                   {roomStatus === 'waiting' && onStartExpedition && (
                     <button
                       type="button"
                       onClick={onStartExpedition}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white cursor-pointer whitespace-nowrap shadow"
+                      className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white cursor-pointer shadow"
                     >
                       <Play className="w-3.5 h-3.5 fill-current" />
                       <span>Mulai Ekspedisi Sekarang</span>
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={handleCopyStudentLink}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
-                    title="Salin Link Khusus Siswa (Multiplayer Supabase)"
-                  >
-                    {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>
-                      {copiedLink ? 'Tersalin!' : `Link Siswa (${roomCode})`}
-                    </span>
-                  </button>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {onToggleClassLobby && (
+                      <button
+                        type="button"
+                        onClick={onToggleClassLobby}
+                        className={`inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border text-[11px] font-semibold cursor-pointer whitespace-nowrap ${
+                          showClassLobby
+                            ? 'bg-amber-600 border-amber-400 text-white'
+                            : 'bg-slate-800 hover:bg-slate-700 border-amber-400/35 text-amber-200'
+                        }`}
+                      >
+                        {showClassLobby ? <EyeOff className="w-3.5 h-3.5 shrink-0" /> : <Eye className="w-3.5 h-3.5 shrink-0" />}
+                        <span className="truncate">{showClassLobby ? 'Tutup Lobi' : `Lobi (${participants.length})`}</span>
+                      </button>
+                    )}
 
-                  {onBuildStandaloneLink && (
                     <button
                       type="button"
-                      onClick={handleCopyStandaloneLink}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-600 border border-teal-400/35 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
-                      title="Cadangan tanpa internet/database: seluruh soal & pengaturan kelas dikemas langsung ke URL"
+                      onClick={() => setRosterModalOpen(true)}
+                      className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold text-white cursor-pointer whitespace-nowrap"
                     >
-                      {copiedStandalone ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-200" />
-                      ) : (
-                        <Link2 className="w-3.5 h-3.5" />
-                      )}
-                      <span>
-                        {copiedStandalone
-                          ? 'Link Paket Tersalin!'
-                          : 'Salin Link Paket Soal (Mode Mandiri)'}
-                      </span>
+                      <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>Peserta ({participants.length})</span>
                     </button>
-                  )}
 
-                  <select
-                    aria-label="Mode Respawn"
-                    value={settings.respawnMode}
-                    onChange={(e) => onUpdateSettings({ respawnMode: e.target.value as RespawnMode })}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
-                  >
-                    <option value="last_cp">Respawn: CP Terakhir</option>
-                    <option value="prev_cp">Respawn: Mundur 1 CP</option>
-                    <option value="base_camp">Respawn: Base Camp</option>
-                  </select>
+                    <button
+                      type="button"
+                      onClick={handleCopyStudentLink}
+                      className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-[11px] font-semibold text-white cursor-pointer whitespace-nowrap"
+                      title="Salin Link Khusus Siswa"
+                    >
+                      {copiedLink ? <Check className="w-3.5 h-3.5 shrink-0" /> : <Copy className="w-3.5 h-3.5 shrink-0" />}
+                      <span>{copiedLink ? 'Tersalin!' : `Link (${roomCode})`}</span>
+                    </button>
 
-                  <select
-                    aria-label="Durasi Sesi"
-                    value={settings.sessionDurationMinutes}
-                    onChange={(e) =>
-                      onUpdateSettings({ sessionDurationMinutes: Number(e.target.value) })
-                    }
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-amber-400/35 text-xs font-mono-num text-amber-200 focus:outline-none focus:border-amber-400"
-                  >
-                    {[10, 15, 20, 25, 30].map((m) => (
-                      <option key={m} value={m}>
-                        Sesi: {m} Menit
-                      </option>
-                    ))}
-                  </select>
+                    {onBuildStandaloneLink && (
+                      <button
+                        type="button"
+                        onClick={handleCopyStandaloneLink}
+                        className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-600 border border-teal-400/35 text-[11px] font-semibold text-white cursor-pointer whitespace-nowrap"
+                        title="Link Paket Soal Mode Mandiri"
+                      >
+                        {copiedStandalone ? <Check className="w-3.5 h-3.5 shrink-0" /> : <Link2 className="w-3.5 h-3.5 shrink-0" />}
+                        <span>{copiedStandalone ? 'Tersalin!' : 'Mode Mandiri'}</span>
+                      </button>
+                    )}
 
-                  <select
-                    aria-label="Timer Soal"
-                    value={settings.quizDuration}
-                    onChange={(e) => onUpdateSettings({ quizDuration: Number(e.target.value) })}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
-                  >
-                    {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((sec) => (
-                      <option key={sec} value={sec}>
-                        Kuis: {sec} Detik
-                      </option>
-                    ))}
-                  </select>
+                    <button
+                      type="button"
+                      onClick={onTogglePause}
+                      className={`inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold text-white cursor-pointer whitespace-nowrap ${
+                        paused ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-amber-700 hover:bg-amber-600'
+                      }`}
+                    >
+                      {paused ? <Play className="w-3.5 h-3.5 shrink-0" /> : <Pause className="w-3.5 h-3.5 shrink-0" />}
+                      <span>{paused ? 'Lanjutkan' : 'Jeda Kelas'}</span>
+                    </button>
 
-                  <select
-                    aria-label="Durasi Pembahasan"
-                    value={settings.explanationDurationSec}
-                    onChange={(e) =>
-                      onUpdateSettings({ explanationDurationSec: Number(e.target.value) })
-                    }
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-sky-200 focus:outline-none focus:border-amber-400"
-                  >
-                    {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((sec) => (
-                      <option key={sec} value={sec}>
-                        Bahasan: {sec} Detik
-                      </option>
-                    ))}
-                  </select>
+                    {!confirmEnd ? (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmEnd(true)}
+                        className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-[11px] font-semibold text-white cursor-pointer whitespace-nowrap"
+                      >
+                        <Trophy className="w-3.5 h-3.5 shrink-0" />
+                        <span>Akhiri Sesi</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmEnd(false);
+                          onEndSession();
+                        }}
+                        onMouseLeave={() => setConfirmEnd(false)}
+                        className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-[11px] font-bold text-white cursor-pointer whitespace-nowrap"
+                      >
+                        <span>Yakin Akhiri?</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
 
+                {/* Section 2: Quick Class Settings */}
+                <div className="space-y-1.5 pt-2 border-t border-white/10">
                   <button
                     type="button"
                     onClick={() => {
                       setExcelStatus(null);
                       setExcelModalOpen(true);
                     }}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-emerald-300 cursor-pointer whitespace-nowrap"
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold text-emerald-300 cursor-pointer"
                   >
-                    <FileSpreadsheet className="w-3.5 h-3.5" />
-                    <span>Bank Soal ({questionCount || 25} PG · {essayQuestionCount || 5} Isian)</span>
+                    <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">Bank Soal ({questionCount || 25} PG · {essayQuestionCount || 5} Isian)</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={onTogglePause}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white cursor-pointer whitespace-nowrap ${
-                      paused ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-emerald-700 hover:bg-amber-600'
-                    }`}
-                  >
-                    {paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-                    <span>{paused ? 'Lanjutkan Mendaki' : 'Jeda Kelas'}</span>
-                  </button>
-
-                  {!confirmEnd ? (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmEnd(true)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <select
+                      aria-label="Mode Respawn"
+                      value={settings.respawnMode}
+                      onChange={(e) => onUpdateSettings({ respawnMode: e.target.value as RespawnMode })}
+                      className="px-2 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-[11px] text-white focus:outline-none focus:border-amber-400"
                     >
-                      <Trophy className="w-3.5 h-3.5" />
-                      <span>Akhiri Sesi</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConfirmEnd(false);
-                        onEndSession();
-                      }}
-                      onMouseLeave={() => setConfirmEnd(false)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
-                    >
-                      <span>Yakin Akhiri &amp; Rekap?</span>
-                    </button>
-                  )}
-                </div>
+                      <option value="last_cp">Respawn: CP Akhir</option>
+                      <option value="prev_cp">Respawn: Mundur 1</option>
+                      <option value="base_camp">Respawn: Base Camp</option>
+                    </select>
 
-                {/* ROW 2: Level Tantangan (1-10), Teleport CP, Waktu Gunung, Cuaca Gunung */}
-                <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1.5 border-t border-white/10">
+                    <select
+                      aria-label="Durasi Sesi"
+                      value={settings.sessionDurationMinutes}
+                      onChange={(e) =>
+                        onUpdateSettings({ sessionDurationMinutes: Number(e.target.value) })
+                      }
+                      className="px-2 py-1.5 rounded-lg bg-slate-900 border border-amber-400/35 text-[11px] font-mono-num text-amber-200 focus:outline-none focus:border-amber-400"
+                    >
+                      {[10, 15, 20, 25, 30, 40, 45, 50, 60].map((m) => (
+                        <option key={m} value={m}>
+                          Sesi: {m} Mnt
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      aria-label="Timer Soal"
+                      value={settings.quizDuration}
+                      onChange={(e) => onUpdateSettings({ quizDuration: Number(e.target.value) })}
+                      className="px-2 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-[11px] text-white focus:outline-none focus:border-amber-400"
+                    >
+                      {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((sec) => (
+                        <option key={sec} value={sec}>
+                          Kuis: {sec} dtk
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      aria-label="Durasi Pembahasan"
+                      value={settings.explanationDurationSec}
+                      onChange={(e) =>
+                        onUpdateSettings({ explanationDurationSec: Number(e.target.value) })
+                      }
+                      className="px-2 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-[11px] text-sky-200 focus:outline-none focus:border-amber-400"
+                    >
+                      {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((sec) => (
+                        <option key={sec} value={sec}>
+                          Bahasan: {sec} dtk
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      aria-label="Waktu Gunung"
+                      value={settings.timeOfDay}
+                      onChange={(e) => onUpdateSettings({ timeOfDay: e.target.value as TimeOfDay })}
+                      className="px-2 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-[11px] text-white focus:outline-none focus:border-amber-400"
+                    >
+                      <option value="pagi">Waktu: Pagi</option>
+                      <option value="siang">Waktu: Siang</option>
+                      <option value="sore">Waktu: Sore</option>
+                      <option value="malam">Waktu: Malam</option>
+                    </select>
+
+                    <select
+                      aria-label="Cuaca Gunung"
+                      value={settings.weather}
+                      onChange={(e) => onUpdateSettings({ weather: e.target.value as WeatherType })}
+                      className="px-2 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-[11px] text-white focus:outline-none focus:border-amber-400"
+                    >
+                      <option value="cerah">Cuaca: Cerah</option>
+                      <option value="berkabut">Cuaca: Berkabut</option>
+                      <option value="hujan">Cuaca: Hujan</option>
+                      <option value="badai">Cuaca: Badai</option>
+                      <option value="salju">Cuaca: Salju</option>
+                      <option value="kiamat">Cuaca: Kiamat</option>
+                    </select>
+                  </div>
+
                   <select
                     aria-label="Level Tantangan"
                     value={settings.difficultyLevel}
                     onChange={(e) => onUpdateSettings({ difficultyLevel: Number(e.target.value) })}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+                    className="w-full px-2 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-[11px] text-white focus:outline-none focus:border-amber-400"
                   >
                     {Object.values(DIFFICULTY_LEVELS).map((d) => (
                       <option key={d.level} value={d.level}>
@@ -864,200 +1243,371 @@ export const GameHud: React.FC<GameHudProps> = ({
                     ))}
                   </select>
 
-                  <div className="inline-flex items-center gap-1">
+                  <div className="flex items-center gap-1">
                     <select
                       aria-label="Pilih Teleport CP"
                       value={teleportTarget}
                       onChange={(e) => setTeleportTarget(Number(e.target.value))}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+                      className="flex-1 min-w-0 px-2 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-[11px] text-white focus:outline-none focus:border-amber-400"
                     >
                       {CP_POINTS.map((cp) => (
                         <option key={cp.index} value={cp.index}>
-                          {cp.index === 0
-                            ? 'Base Camp (CP 0)'
-                            : cp.index === 25
-                              ? 'Puncak (CP 25)'
-                              : `CP ${cp.index}`}
+                          {cp.index === 0 ? 'Base Camp (CP 0)' : cp.index === 25 ? 'Puncak (CP 25)' : `CP ${cp.index}`}
                         </option>
                       ))}
-                      <option value={26}>Gapura Puncak (Pos Ujian Akhir)</option>
+                      <option value={26}>Gapura Puncak (Ujian)</option>
                     </select>
                     <button
                       type="button"
                       onClick={() => onTeleport(teleportTarget)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-sky-300 cursor-pointer whitespace-nowrap"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold text-sky-300 cursor-pointer shrink-0"
                     >
                       <MapPin className="w-3.5 h-3.5" />
-                      <span>Teleport</span>
+                      <span>TP</span>
                     </button>
                   </div>
-
-                  <select
-                    aria-label="Waktu Gunung"
-                    value={settings.timeOfDay}
-                    onChange={(e) => onUpdateSettings({ timeOfDay: e.target.value as TimeOfDay })}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
-                  >
-                    <option value="pagi">Waktu: Pagi</option>
-                    <option value="siang">Waktu: Siang</option>
-                    <option value="sore">Waktu: Sore</option>
-                    <option value="malam">Waktu: Malam</option>
-                  </select>
-
-                  <select
-                    aria-label="Cuaca Gunung"
-                    value={settings.weather}
-                    onChange={(e) => onUpdateSettings({ weather: e.target.value as WeatherType })}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
-                  >
-                    <option value="cerah">Cuaca: Cerah</option>
-                    <option value="berkabut">Cuaca: Berkabut</option>
-                    <option value="hujan">Cuaca: Hujan</option>
-                    <option value="badai">Cuaca: Badai</option>
-                    <option value="salju">Cuaca: Salju</option>
-                    <option value="kiamat">Cuaca: Kiamat</option>
-                  </select>
                 </div>
 
-                {/* ROW 3: Mode Avatar, Reset Kamera, Emote, Peserta (Roster+Kick), Quick Hazards */}
-                <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1.5 border-t border-white/10">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDraftAvatar({ ...avatar });
-                      setAvatarModalOpen(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
-                  >
-                    <UserCog className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Mode Avatar</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={onResetCamera}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
-                  >
-                    <Camera className="w-3.5 h-3.5 text-sky-400" />
-                    <span>Reset Kamera</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setEmoteMenuOpen((v) => !v)}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
-                      emoteMenuOpen
-                        ? 'bg-amber-600 border-amber-400 text-white'
-                        : 'bg-slate-800 hover:bg-slate-700 border-white/15 text-white'
-                    }`}
-                  >
-                    <Smile className="w-3.5 h-3.5 text-amber-300" />
-                    <span>Emote</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setRosterModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
-                  >
-                    <Users className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Peserta ({participants.length})</span>
-                  </button>
-
-                  <span className="text-slate-600 hidden sm:inline">|</span>
-
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('hail')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-900/85 hover:bg-cyan-800 border border-cyan-400/50 text-xs font-semibold text-cyan-100 cursor-pointer whitespace-nowrap"
-                    title="Turunkan hujan kristal es tajam yang memperlambat gerak siswa"
-                  >
-                    <Snowflake className="w-3.5 h-3.5" />
-                    <span>Hujan Es</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('thunder')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
-                  >
-                    <CloudLightning className="w-3.5 h-3.5" />
-                    <span>Badai Petir</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('heavy_rain')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-950/80 hover:bg-sky-900 border border-sky-500/40 text-xs font-semibold text-sky-100 cursor-pointer whitespace-nowrap"
-                    title="Turunkan Hujan Lebat selama 5 detik (maks 50 partikel)"
-                  >
-                    <CloudRain className="w-3.5 h-3.5" />
-                    <span>Hujan Lebat</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('thick_fog')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-500/40 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap"
-                    title="Turunkan Kabut Tebal menyelimuti gunung selama 5 detik"
-                  >
-                    <CloudFog className="w-3.5 h-3.5" />
-                    <span>Kabut Tebal</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('wildlife')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-900/85 hover:bg-amber-800 border border-amber-500/40 text-xs font-semibold text-amber-100 cursor-pointer whitespace-nowrap"
-                    title="Munculkan satwa liar di jalur pendakian selama 5 detik"
-                  >
-                    <PawPrint className="w-3.5 h-3.5" />
-                    <span>Satwa Liar</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('kuntilanak')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
-                    title="Munculkan 3 Kuntilanak realistis di jalur pendakian selama 5 detik"
-                  >
-                    <Ghost className="w-3.5 h-3.5" />
-                    <span>Kuntilanak</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('pocong')}
-                    className="px-2.5 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-xs font-semibold text-red-100 cursor-pointer whitespace-nowrap"
-                    title="Munculkan 3 Pocong realistis di jalur pendakian selama 5 detik"
-                  >
-                    Pocong
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('earthquake')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-900/85 hover:bg-amber-800 border border-amber-500/40 text-xs font-semibold text-amber-100 cursor-pointer whitespace-nowrap"
-                    title="Guncangan Gempa Bumi gunung selama 5 detik"
-                  >
-                    <Activity className="w-3.5 h-3.5" />
-                    <span>Gempa</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('fire_rain')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-orange-900/85 hover:bg-orange-800 border border-orange-500/40 text-xs font-semibold text-orange-100 cursor-pointer whitespace-nowrap"
-                    title="Turunkan Hujan Api selama 5 detik (maks 50 partikel)"
-                  >
-                    <Flame className="w-3.5 h-3.5" />
-                    <span>Hujan Api</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTriggerEvent('meteor')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-900/85 hover:bg-rose-800 border border-rose-500/40 text-xs font-semibold text-rose-100 cursor-pointer whitespace-nowrap"
-                    title="Turunkan Hujan Meteor Api selama 5 detik"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Hujan Meteor</span>
-                  </button>
+                {/* Section 2B: 5-Map Live Theme Selector */}
+                <div className="space-y-1.5 pt-2 border-t border-white/10">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="font-semibold text-slate-400">Tema Map 3D (Real-Time Siswa)</span>
+                    <span className="font-bold text-amber-300">{currentMapMeta.shortName}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {MAP_THEMES.map((m) => {
+                      const active = (settings.selectedMap || 'nusantara') === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => onUpdateSettings({ selectedMap: m.id as MapThemeId })}
+                          className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[11px] font-semibold cursor-pointer text-left ${
+                            active
+                              ? 'bg-slate-800 border-amber-400 text-white'
+                              : 'bg-slate-900 hover:bg-slate-800 border-white/10 text-slate-300'
+                          } ${m.id === 'cyber_neon' ? 'col-span-2 justify-center' : ''}`}
+                        >
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full bg-gradient-to-r ${m.badgeClass} shrink-0`}
+                          />
+                          <span className="truncate">{m.shortName}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </>
-            ) : (
-              /* STUDENT COMPACT BOTTOM DOCK */
+
+                {/* Section 3: Teacher Avatar, Camera, Emote & Fly Mode */}
+                <div className="space-y-1.5 pt-2 border-t border-white/10">
+                  {onToggleTeacherFly && (
+                    <button
+                      type="button"
+                      onClick={onToggleTeacherFly}
+                      className={`w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-bold cursor-pointer ${
+                        teacherFlyMode
+                          ? 'bg-sky-600 hover:bg-sky-500 border-sky-300 text-white'
+                          : 'bg-slate-800 hover:bg-slate-700 border-white/15 text-sky-200'
+                      }`}
+                    >
+                      <Feather className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        Mode Terbang: {teacherFlyMode ? 'ON (Spasi Naik · Shift/C Turun)' : 'OFF (Tekan F)'}
+                      </span>
+                    </button>
+                  )}
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftAvatar({ ...avatar });
+                        setAvatarModalOpen(true);
+                      }}
+                      className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold text-white cursor-pointer"
+                    >
+                      <UserCog className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>Avatar</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onResetCamera}
+                      className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold text-white cursor-pointer"
+                    >
+                      <Camera className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span>Kamera</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEmoteMenuOpen((v) => !v)}
+                      className={`inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border text-[11px] font-semibold cursor-pointer ${
+                        emoteMenuOpen
+                          ? 'bg-amber-600 border-amber-400 text-white'
+                          : 'bg-slate-800 hover:bg-slate-700 border-white/15 text-white'
+                      }`}
+                    >
+                      <Smile className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                      <span>Emote</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Section 4: Map-Contextual Disaster & Horror Triggers */}
+                <div className="space-y-1.5 pt-2 border-t border-white/10">
+                  <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400">
+                    <span>Event Bencana &amp; Horor</span>
+                    <span className="text-amber-300">{currentMapMeta.shortName}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(settings.selectedMap === 'nusantara' || !settings.selectedMap) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('flash_flood')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-sky-600/85 hover:bg-sky-500 border border-sky-300/60 text-[11px] font-semibold text-white cursor-pointer whitespace-nowrap"
+                        >
+                          <Waves className="w-3.5 h-3.5 shrink-0" />
+                          <span>Banjir Bandang</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('landslide')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-900/85 hover:bg-amber-800 border border-amber-500/45 text-[11px] font-semibold text-amber-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <Mountain className="w-3.5 h-3.5 shrink-0" />
+                          <span>Tanah Longsor</span>
+                        </button>
+                      </>
+                    )}
+
+                    {settings.selectedMap === 'salju' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('yeti')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-cyan-900/90 hover:bg-cyan-800 border border-cyan-300/55 text-[11px] font-semibold text-cyan-50 cursor-pointer whitespace-nowrap"
+                        >
+                          <Ghost className="w-3.5 h-3.5 text-cyan-200 shrink-0" />
+                          <span>Monster Salju</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('landslide')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-sky-900/85 hover:bg-sky-800 border border-sky-300/50 text-[11px] font-semibold text-sky-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <Mountain className="w-3.5 h-3.5 shrink-0" />
+                          <span>Longsor Salju</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('snowstorm')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-blue-950/90 hover:bg-blue-900 border border-blue-400/60 text-[11px] font-semibold text-blue-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <Snowflake className="w-3.5 h-3.5 text-sky-200 shrink-0" />
+                          <span>Badai Salju</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('hail')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-cyan-900/85 hover:bg-cyan-800 border border-cyan-400/50 text-[11px] font-semibold text-cyan-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <Snowflake className="w-3.5 h-3.5 shrink-0" />
+                          <span>Hujan Es</span>
+                        </button>
+                      </>
+                    )}
+
+                    {settings.selectedMap === 'lava' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('lava_rain')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-orange-900/85 hover:bg-orange-800 border border-orange-400/55 text-[11px] font-semibold text-orange-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <Flame className="w-3.5 h-3.5 shrink-0" />
+                          <span>Hujan Lava</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('lava_landslide')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-red-900/85 hover:bg-red-800 border border-red-400/50 text-[11px] font-semibold text-red-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <Mountain className="w-3.5 h-3.5 shrink-0" />
+                          <span>Longsor Lava</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('lava_flood')}
+                          className="col-span-2 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-orange-950/90 hover:bg-orange-900 border border-orange-500/60 text-[11px] font-semibold text-orange-200 cursor-pointer whitespace-nowrap"
+                        >
+                          <Waves className="w-3.5 h-3.5 shrink-0" />
+                          <span>Banjir Lava Kaldera (7 dtk)</span>
+                        </button>
+                      </>
+                    )}
+
+                    {(settings.selectedMap === 'sky_kingdom' ||
+                      settings.selectedMap === 'cyber_neon') && (
+                      <button
+                        type="button"
+                        onClick={() => onTriggerEvent('hail')}
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-cyan-900/85 hover:bg-cyan-800 border border-cyan-400/50 text-[11px] font-semibold text-cyan-100 cursor-pointer whitespace-nowrap"
+                      >
+                        <Snowflake className="w-3.5 h-3.5 shrink-0" />
+                        <span>Hujan Es</span>
+                      </button>
+                    )}
+
+                    {settings.selectedMap !== 'lava' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('thunder')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-[11px] font-semibold text-red-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <CloudLightning className="w-3.5 h-3.5 shrink-0" />
+                          <span>Badai Petir</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('heavy_rain')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-sky-950/80 hover:bg-sky-900 border border-sky-500/40 text-[11px] font-semibold text-sky-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <CloudRain className="w-3.5 h-3.5 shrink-0" />
+                          <span>Hujan Lebat</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('thick_fog')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-500/40 text-[11px] font-semibold text-slate-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <CloudFog className="w-3.5 h-3.5 shrink-0" />
+                          <span>Kabut Tebal</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('wildlife')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-900/85 hover:bg-amber-800 border border-amber-500/40 text-[11px] font-semibold text-amber-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <PawPrint className="w-3.5 h-3.5 shrink-0" />
+                          <span>Satwa Liar</span>
+                        </button>
+                      </>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => onTriggerEvent('kuntilanak')}
+                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-[11px] font-semibold text-red-100 cursor-pointer whitespace-nowrap"
+                    >
+                      <Ghost className="w-3.5 h-3.5 shrink-0" />
+                      <span>Kuntilanak</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onTriggerEvent('pocong')}
+                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 border border-red-500/40 text-[11px] font-semibold text-red-100 cursor-pointer whitespace-nowrap"
+                    >
+                      <Ghost className="w-3.5 h-3.5 shrink-0" />
+                      <span>Pocong</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onTriggerEvent('earthquake')}
+                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-900/85 hover:bg-amber-800 border border-amber-500/40 text-[11px] font-semibold text-amber-100 cursor-pointer whitespace-nowrap"
+                    >
+                      <Activity className="w-3.5 h-3.5 shrink-0" />
+                      <span>Gempa</span>
+                    </button>
+
+                    {(settings.selectedMap === 'lava' ||
+                      settings.selectedMap === 'sky_kingdom' ||
+                      settings.selectedMap === 'cyber_neon') && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('fire_rain')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-orange-900/85 hover:bg-orange-800 border border-orange-500/40 text-[11px] font-semibold text-orange-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <Flame className="w-3.5 h-3.5 shrink-0" />
+                          <span>Hujan Api</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onTriggerEvent('meteor')}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-rose-900/85 hover:bg-rose-800 border border-rose-500/40 text-[11px] font-semibold text-rose-100 cursor-pointer whitespace-nowrap"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                          <span>Hujan Meteor</span>
+                        </button>
+                      </>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => onTriggerEvent('brainrot')}
+                      className="col-span-2 inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-gradient-to-r from-purple-800 via-fuchsia-700 to-purple-800 hover:from-purple-700 hover:via-fuchsia-600 hover:to-purple-700 border border-fuchsia-400/75 text-[11px] font-bold text-fuchsia-50 shadow-[0_0_14px_rgba(192,38,211,0.45)] cursor-pointer whitespace-nowrap"
+                    >
+                      <Brain className="w-3.5 h-3.5 text-fuchsia-200 shrink-0" />
+                      <span>Kemunculan Brainrot (6 dtk)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* STUDENT COMPACT COLLAPSIBLE BOTTOM CONTROL DOCK */
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className={`fixed left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-auto touch-none ${
+            isCompactMobile || isTouchDevice
+              ? `bottom-2 ${controlsOpen ? 'z-40' : 'z-30 max-w-[calc(100vw-13.5rem)]'}`
+              : 'bottom-2.5 z-30 max-w-[97vw]'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setControlsOpen((v) => !v);
+              setEmoteMenuOpen(false);
+            }}
+            className={`inline-flex items-center gap-1 rounded-t-lg bg-slate-950/92 border border-b-0 border-white/15 font-semibold text-amber-300 hover:text-white cursor-pointer whitespace-nowrap ${
+              isCompactMobile ? 'px-2.5 py-1 text-[10px]' : 'px-3.5 py-1 text-[11px] gap-1.5'
+            }`}
+          >
+            {controlsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+            <span>{controlsOpen ? 'Sembunyikan Kontrol' : 'Tampilkan Kontrol'}</span>
+          </button>
+
+          {controlsOpen && (
+            <div
+              className={`relative rounded-xl bg-slate-950/92 border border-white/15 shadow-2xl space-y-2 ${
+                isCompactMobile || isTouchDevice
+                  ? 'px-2 py-1.5 max-w-[calc(100vw-13.5rem)] max-h-[44vh] overflow-y-auto'
+                  : 'px-3 py-2.5 max-w-[97vw]'
+              }`}
+            >
+              {emoteMenuOpen && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 rounded-xl bg-slate-900 border border-amber-400/50 shadow-2xl flex flex-wrap justify-center gap-1.5 w-[340px] max-w-[92vw]">
+                  {EMOTE_ITEMS.map((em) => (
+                    <button
+                      key={em.id}
+                      type="button"
+                      onClick={() => {
+                        onTriggerEmote(em.id);
+                        setEmoteMenuOpen(false);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-amber-600 text-xs font-semibold text-white cursor-pointer transition-colors"
+                    >
+                      <span>{em.emoji}</span>
+                      <span>{em.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <button
                   type="button"
@@ -1076,9 +1626,20 @@ export const GameHud: React.FC<GameHudProps> = ({
                   onClick={onResetCamera}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
                 >
-                  <Camera className="w-3.5 h-3.5 text-sky-400" />
+                  <RotateCcw className="w-3.5 h-3.5 text-sky-400" />
                   <span>Reset Kamera</span>
                 </button>
+
+                {onTogglePhotoMode && (
+                  <button
+                    type="button"
+                    onClick={onTogglePhotoMode}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-amber-400/45 text-xs font-semibold text-amber-200 cursor-pointer whitespace-nowrap"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Foto</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -1092,6 +1653,21 @@ export const GameHud: React.FC<GameHudProps> = ({
                   <Smile className="w-3.5 h-3.5 text-amber-300" />
                   <span>Emote</span>
                 </button>
+
+                {essayDone && canSpectatePeers && !isStandaloneMode && onCycleSpectate && (
+                  <button
+                    type="button"
+                    onClick={spectatingTargetName && onStopSpectate ? onStopSpectate : onCycleSpectate}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                      spectatingTargetName
+                        ? 'bg-sky-600 border-sky-400 text-white'
+                        : 'bg-slate-800 hover:bg-slate-700 border-sky-400/40 text-sky-200'
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>{spectatingTargetName ? 'Kembali ke Karakterku' : 'Mode Kamera Pantau'}</span>
+                  </button>
+                )}
 
                 {isStandaloneMode && essayDone && onFinishStandalone && (
                   <button
@@ -1114,10 +1690,10 @@ export const GameHud: React.FC<GameHudProps> = ({
                   </span>
                 )}
               </div>
-            )}
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* MOBILE / TOUCH MULTI-TOUCH CONTROLS: JOYSTICK (BOTTOM-LEFT) + LOMPAT (BOTTOM-RIGHT) + CP BAR (ABOVE JUMP) */}
       {isTouchDevice && (
@@ -1168,7 +1744,52 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
       )}
 
-      {isTouchDevice && (
+      {role === 'teacher' && teacherFlyMode && onFlyVerticalChange && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className={`fixed right-6 z-20 flex flex-col gap-2 pointer-events-auto touch-none ${
+            isTouchDevice ? 'bottom-26' : 'bottom-6'
+          }`}
+        >
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onFlyVerticalChange(1);
+            }}
+            onPointerUp={(e) => {
+              e.stopPropagation();
+              onFlyVerticalChange(0);
+            }}
+            onPointerLeave={() => onFlyVerticalChange(0)}
+            onPointerCancel={() => onFlyVerticalChange(0)}
+            className="inline-flex items-center justify-center gap-1 px-3.5 py-2.5 rounded-xl bg-sky-600/92 active:bg-sky-500 border border-sky-300/70 text-white font-bold text-xs shadow-lg cursor-pointer select-none"
+          >
+            <ArrowUp className="w-4 h-4" />
+            <span>Naik</span>
+          </button>
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onFlyVerticalChange(-1);
+            }}
+            onPointerUp={(e) => {
+              e.stopPropagation();
+              onFlyVerticalChange(0);
+            }}
+            onPointerLeave={() => onFlyVerticalChange(0)}
+            onPointerCancel={() => onFlyVerticalChange(0)}
+            className="inline-flex items-center justify-center gap-1 px-3.5 py-2.5 rounded-xl bg-slate-800/92 active:bg-slate-700 border border-white/25 text-white font-bold text-xs shadow-lg cursor-pointer select-none"
+          >
+            <ArrowDown className="w-4 h-4" />
+            <span>Turun</span>
+          </button>
+        </div>
+      )}
+
+      {isTouchDevice && !(role === 'teacher' && teacherFlyMode) && (
         <button
           type="button"
           onPointerDown={(e) => e.stopPropagation()}
@@ -1187,6 +1808,140 @@ export const GameHud: React.FC<GameHudProps> = ({
         >
           LOMPAT
         </button>
+      )}
+        </>
+      )}
+
+      {/* PHOTO MODE VIEWFINDER OVERLAY (ALL HUD HIDDEN) */}
+      {photoMode && !capturedPhotoUrl && (
+        <>
+          <div className="fixed inset-4 sm:inset-7 pointer-events-none">
+            <div className="absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 border-white/75 rounded-tl-md" />
+            <div className="absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 border-white/75 rounded-tr-md" />
+            <div className="absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 border-white/75 rounded-bl-md" />
+            <div className="absolute bottom-0 right-0 w-7 h-7 border-b-2 border-r-2 border-white/75 rounded-br-md" />
+          </div>
+
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 px-3.5 py-1.5 rounded-xl bg-slate-950/75 border border-white/15 text-[11px] sm:text-xs font-semibold text-slate-100 pointer-events-none whitespace-nowrap">
+            Mode Foto · Seret layar untuk atur sudut · {currentMapMeta.shortName}
+          </div>
+
+          <div
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3 py-2 rounded-2xl bg-slate-950/88 border border-white/20 shadow-2xl pointer-events-auto touch-none max-w-[96vw]"
+          >
+            {onTogglePhotoAngle && (
+              <button
+                type="button"
+                onClick={onTogglePhotoAngle}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer whitespace-nowrap ${
+                  photoSelfie
+                    ? 'bg-sky-600 border-sky-300/70 text-white'
+                    : 'bg-slate-800 hover:bg-slate-700 border-white/15 text-slate-100'
+                }`}
+              >
+                <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                <span>{photoSelfie ? 'Sudut Belakang' : 'Selfie'}</span>
+              </button>
+            )}
+
+            {onCapturePhoto && (
+              <button
+                type="button"
+                onClick={onCapturePhoto}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 font-extrabold text-xs sm:text-sm cursor-pointer whitespace-nowrap shadow-lg"
+              >
+                <Camera className="w-4 h-4 shrink-0" />
+                <span>Jepret Foto</span>
+              </button>
+            )}
+
+            {onTogglePhotoMode && (
+              <button
+                type="button"
+                onClick={onTogglePhotoMode}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/90 hover:bg-red-500 text-xs font-bold text-white cursor-pointer whitespace-nowrap"
+              >
+                <X className="w-3.5 h-3.5 shrink-0" />
+                <span>Tutup Mode Foto</span>
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* INSTANT CAPTURED PHOTO PREVIEW & DOWNLOAD MODAL */}
+      {photoMode && capturedPhotoUrl && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-950/85 pointer-events-auto"
+        >
+          <div className="w-full max-w-3xl rounded-2xl bg-slate-900 border border-amber-400/50 p-4 sm:p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-xl font-extrabold text-white tracking-wide">
+                  Hasil Foto Ekspedisi
+                </h3>
+                <p className="text-xs text-slate-300">
+                  {playerName} · Ruang #{roomCode} · {currentMapMeta.name}
+                </p>
+              </div>
+              {onTogglePhotoMode && (
+                <button
+                  type="button"
+                  onClick={onTogglePhotoMode}
+                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer"
+                  aria-label="Tutup Mode Foto"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <div className="rounded-xl overflow-hidden border border-white/15 bg-slate-950 flex items-center justify-center max-h-[62vh]">
+              <img
+                src={capturedPhotoUrl}
+                alt="Hasil Foto Ekspedisi Wowo Peak"
+                className="w-full h-auto max-h-[62vh] object-contain"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2.5">
+              {onClosePhotoPreview && (
+                <button
+                  type="button"
+                  onClick={onClosePhotoPreview}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-white cursor-pointer"
+                >
+                  <Camera className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Foto Lagi</span>
+                </button>
+              )}
+
+              <a
+                href={capturedPhotoUrl}
+                download={`wowo-peak-${roomCode || 'ekspedisi'}-cp${currentCP}.png`}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs sm:text-sm font-bold text-white cursor-pointer shadow"
+              >
+                <Download className="w-4 h-4" />
+                <span>Simpan Foto (.PNG)</span>
+              </a>
+
+              {onTogglePhotoMode && (
+                <button
+                  type="button"
+                  onClick={onTogglePhotoMode}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-red-600/90 hover:bg-red-500 text-xs font-bold text-white cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Tutup Mode Foto</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* IN-GAME AVATAR EDITOR MODAL */}
@@ -1515,6 +2270,48 @@ export const GameHud: React.FC<GameHudProps> = ({
                 <span>{excelStatus.text}</span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* NEXT STUDENT SHIFT CONFIRMATION MODAL (LAB PC TURN SWAP) */}
+      {confirmNextShift && onNextStudentShift && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/85 pointer-events-auto"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-amber-400/55 p-5 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shrink-0">
+                <UserPlus className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-white">Ganti ke Siswa Berikutnya?</h3>
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  Yakin ingin mengganti ke siswa berikutnya? Nilai kamu sudah tersimpan aman di Guru.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setConfirmNextShift(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold text-slate-200 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmNextShift(false);
+                  onNextStudentShift();
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white cursor-pointer"
+              >
+                Ya, Ganti Siswa
+              </button>
+            </div>
           </div>
         </div>
       )}

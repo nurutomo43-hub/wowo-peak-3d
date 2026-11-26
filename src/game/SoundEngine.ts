@@ -969,4 +969,261 @@ export class SoundEngine {
       src.start(now);
     }
   }
+
+  public playFloodRumble(isLava = false) {
+    if (!this.ctx || this.muted) return;
+    const now = this.ctx.currentTime;
+    const buf = this.createNoiseBuffer(2.4);
+    if (buf) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = isLava ? 'lowpass' : 'bandpass';
+      filter.frequency.setValueAtTime(isLava ? 210 : 420, now);
+      filter.frequency.exponentialRampToValueAtTime(isLava ? 95 : 190, now + 2.2);
+      filter.Q.value = isLava ? 1.8 : 0.9;
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.linearRampToValueAtTime(0.28, now + 0.28);
+      gain.gain.exponentialRampToValueAtTime(0.004, now + 2.35);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+      src.start(now);
+    }
+
+    const sub = this.ctx.createOscillator();
+    const subGain = this.ctx.createGain();
+    sub.type = isLava ? 'triangle' : 'sine';
+    sub.frequency.setValueAtTime(isLava ? 68 : 84, now);
+    sub.frequency.exponentialRampToValueAtTime(34, now + 1.8);
+    subGain.gain.setValueAtTime(0.01, now);
+    subGain.gain.linearRampToValueAtTime(0.26, now + 0.25);
+    subGain.gain.exponentialRampToValueAtTime(0.003, now + 1.9);
+    sub.connect(subGain);
+    subGain.connect(this.ctx.destination);
+    sub.start(now);
+    sub.stop(now + 1.95);
+  }
+
+  public playYetiRoar() {
+    if (!this.ctx || this.muted) return;
+    const now = this.ctx.currentTime;
+
+    // Deep guttural sub-roar
+    const osc1 = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+    osc1.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(118, now);
+    osc1.frequency.exponentialRampToValueAtTime(44, now + 0.88);
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(76, now);
+    osc2.frequency.exponentialRampToValueAtTime(34, now + 0.92);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(620, now);
+    filter.frequency.exponentialRampToValueAtTime(180, now + 0.9);
+    filter.Q.value = 2.4;
+
+    gain.gain.setValueAtTime(0.01, now);
+    gain.gain.linearRampToValueAtTime(0.42, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.004, now + 0.95);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 0.96);
+    osc2.stop(now + 0.96);
+
+    // Icy breath burst
+    const buf = this.createNoiseBuffer(0.75);
+    if (buf) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(460, now);
+      bp.frequency.exponentialRampToValueAtTime(190, now + 0.7);
+      bp.Q.value = 1.4;
+      const ng = this.ctx.createGain();
+      ng.gain.setValueAtTime(0.01, now);
+      ng.gain.linearRampToValueAtTime(0.24, now + 0.07);
+      ng.gain.exponentialRampToValueAtTime(0.004, now + 0.72);
+      src.connect(bp);
+      bp.connect(ng);
+      ng.connect(this.ctx.destination);
+      src.start(now);
+    }
+  }
+
+  public playSnowstormWind(durationSec = 7.0) {
+    if (!this.ctx || this.muted) return;
+    const now = this.ctx.currentTime;
+    const dur = Math.max(1.5, Math.min(8.0, durationSec));
+    const buf = this.createNoiseBuffer(dur);
+    if (!buf) return;
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(340, now);
+    bp.frequency.linearRampToValueAtTime(840, now + dur * 0.35);
+    bp.frequency.linearRampToValueAtTime(420, now + dur * 0.7);
+    bp.frequency.linearRampToValueAtTime(240, now + dur);
+    bp.Q.value = 1.8;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.01, now);
+    gain.gain.linearRampToValueAtTime(0.26, now + 0.55);
+    gain.gain.setValueAtTime(0.24, now + Math.max(0.6, dur - 1.1));
+    gain.gain.exponentialRampToValueAtTime(0.004, now + dur);
+
+    src.connect(bp);
+    bp.connect(gain);
+    gain.connect(this.ctx.destination);
+    src.start(now);
+  }
+
+  public playBrainrotSound() {
+    if (!this.ctx || this.muted) return;
+    const now = this.ctx.currentTime;
+
+    // 1) Classic 60Hz "Vine Boom" heavy sub-bass punch
+    const boom = this.ctx.createOscillator();
+    const boomGain = this.ctx.createGain();
+    boom.type = 'sine';
+    boom.frequency.setValueAtTime(64, now);
+    boom.frequency.exponentialRampToValueAtTime(28, now + 0.62);
+    boomGain.gain.setValueAtTime(0.01, now);
+    boomGain.gain.linearRampToValueAtTime(0.55, now + 0.018);
+    boomGain.gain.exponentialRampToValueAtTime(0.002, now + 0.68);
+    boom.connect(boomGain);
+    boomGain.connect(this.ctx.destination);
+    boom.start(now);
+    boom.stop(now + 0.72);
+
+    const boomBuf = this.createNoiseBuffer(0.32);
+    if (boomBuf) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = boomBuf;
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(240, now);
+      const ng = this.ctx.createGain();
+      ng.gain.setValueAtTime(0.3, now);
+      ng.gain.exponentialRampToValueAtTime(0.004, now + 0.3);
+      src.connect(lp);
+      lp.connect(ng);
+      ng.connect(this.ctx.destination);
+      src.start(now);
+    }
+
+    // 2) Rapid up-down glitch / Skibidi synth chirps
+    const notes = [
+      { t: 0.06, f1: 420, f2: 880, dur: 0.08 },
+      { t: 0.16, f1: 920, f2: 390, dur: 0.08 },
+      { t: 0.26, f1: 520, f2: 1040, dur: 0.09 },
+      { t: 0.38, f1: 980, f2: 460, dur: 0.09 },
+      { t: 0.5, f1: 620, f2: 1180, dur: 0.11 },
+    ];
+    for (const n of notes) {
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(n.f1, now + n.t);
+      osc.frequency.exponentialRampToValueAtTime(n.f2, now + n.t + n.dur);
+      g.gain.setValueAtTime(0.085, now + n.t);
+      g.gain.exponentialRampToValueAtTime(0.002, now + n.t + n.dur);
+      osc.connect(g);
+      g.connect(this.ctx.destination);
+      osc.start(now + n.t);
+      osc.stop(now + n.t + n.dur + 0.02);
+    }
+
+    // 3) Rhythmic hollow wooden percussion hits ("Tung Tung Tung Sahur")
+    const hits = [0.64, 0.78, 0.92, 1.12];
+    hits.forEach((ht, idx) => {
+      if (!this.ctx) return;
+      const woodOsc = this.ctx.createOscillator();
+      const bp = this.ctx.createBiquadFilter();
+      const wg = this.ctx.createGain();
+      woodOsc.type = 'triangle';
+      const pitch = idx === hits.length - 1 ? 390 : 310 + idx * 18;
+      woodOsc.frequency.setValueAtTime(pitch * 1.4, now + ht);
+      woodOsc.frequency.exponentialRampToValueAtTime(pitch, now + ht + 0.06);
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(480, now + ht);
+      bp.Q.value = 2.4;
+      wg.gain.setValueAtTime(0.01, now + ht);
+      wg.gain.linearRampToValueAtTime(0.32, now + ht + 0.008);
+      wg.gain.exponentialRampToValueAtTime(0.003, now + ht + 0.11);
+      woodOsc.connect(bp);
+      bp.connect(wg);
+      wg.connect(this.ctx.destination);
+      woodOsc.start(now + ht);
+      woodOsc.stop(now + ht + 0.13);
+    });
+  }
+
+  public playCameraShutter() {
+    if (!this.ctx || this.muted) return;
+    const now = this.ctx.currentTime;
+
+    const triggerClick = (offset: number, centerHz: number, pitchStart: number, pitchEnd: number, gainAmt: number) => {
+      if (!this.ctx) return;
+      const t0 = now + offset;
+      const noiseBuf = this.createNoiseBuffer(0.045);
+      if (noiseBuf) {
+        const src = this.ctx.createBufferSource();
+        src.buffer = noiseBuf;
+        const bp = this.ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.setValueAtTime(centerHz, t0);
+        bp.Q.value = 1.8;
+        const ng = this.ctx.createGain();
+        ng.gain.setValueAtTime(gainAmt, t0);
+        ng.gain.exponentialRampToValueAtTime(0.002, t0 + 0.036);
+        src.connect(bp);
+        bp.connect(ng);
+        ng.connect(this.ctx.destination);
+        src.start(t0);
+      }
+
+      const osc = this.ctx.createOscillator();
+      const og = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(pitchStart, t0);
+      osc.frequency.exponentialRampToValueAtTime(pitchEnd, t0 + 0.028);
+      og.gain.setValueAtTime(gainAmt * 0.75, t0);
+      og.gain.exponentialRampToValueAtTime(0.002, t0 + 0.03);
+      osc.connect(og);
+      og.connect(this.ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + 0.035);
+    };
+
+    // Double mechanical shutter blade snap
+    triggerClick(0, 2650, 1550, 620, 0.36);
+    triggerClick(0.068, 1950, 1180, 480, 0.28);
+
+    // Subtle crisp confirmation chime
+    const chime = this.ctx.createOscillator();
+    const cg = this.ctx.createGain();
+    chime.type = 'sine';
+    chime.frequency.setValueAtTime(1760, now + 0.095);
+    chime.frequency.exponentialRampToValueAtTime(2093, now + 0.16);
+    cg.gain.setValueAtTime(0.001, now + 0.095);
+    cg.gain.linearRampToValueAtTime(0.055, now + 0.105);
+    cg.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+    chime.connect(cg);
+    cg.connect(this.ctx.destination);
+    chime.start(now + 0.095);
+    chime.stop(now + 0.2);
+  }
 }

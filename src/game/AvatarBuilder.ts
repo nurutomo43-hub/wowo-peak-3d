@@ -109,6 +109,21 @@ const SHARED_GEO = {
 export function disposeAvatarGroup(root: THREE.Object3D | null | undefined) {
   if (!root) return;
   root.traverse((obj) => {
+    const sprite = obj as THREE.Sprite;
+    if (sprite.isSprite) {
+      const smat = sprite.material as THREE.SpriteMaterial | undefined;
+      if (smat) {
+        if (smat.map && !smat.map.userData?.sharedTexture) {
+          smat.map.dispose();
+        }
+        smat.dispose();
+      }
+      if (sprite.userData?.canvas) {
+        sprite.userData.canvas = null;
+      }
+      return;
+    }
+
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
     if (mesh.geometry && !mesh.geometry.userData?.shared) {

@@ -7,6 +7,7 @@ import type {
   EssayAnswerRecord,
   EssayQuestion,
   ExportStudentRow,
+  MapThemeId,
   ParticipantSummary,
   PlayerPose,
   PublicRoomState,
@@ -92,6 +93,7 @@ export interface SupabaseRoomConfig {
   teacherName: string;
   teacherAvatar: AvatarConfig;
   settings: RoomSettings;
+  selected_map?: MapThemeId;
   paused: boolean;
   sessionEnded: boolean;
   endReason?: 'teacher' | 'timeout';
@@ -273,6 +275,7 @@ export type RoomBroadcastMessage =
 
 let hasPlayersColumn: boolean | null = null;
 let hasActiveEventColumn: boolean | null = null;
+let hasSelectedMapColumn: boolean | null = null;
 
 function isMissingPlayersColumnError(err: { code?: string; message?: string } | null): boolean {
   if (!err) return false;
@@ -286,6 +289,12 @@ function isMissingActiveEventColumnError(err: { code?: string; message?: string 
   return err.code === '42703' || err.code === 'PGRST204' || msg.includes('active_event');
 }
 
+function isMissingSelectedMapColumnError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('selected_map') && (err.code === '42703' || err.code === 'PGRST204' || msg.includes('column'));
+}
+
 export function createEventId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -295,15 +304,30 @@ export function createEventId(): string {
 
 export async function upsertSupabaseRoom(code: string, config: SupabaseRoomConfig): Promise<void> {
   const supabase = getSupabaseClient();
-  const payload: Record<string, unknown> = { code, config };
+  const resolvedMap: MapThemeId = config.selected_map || config.settings?.selectedMap || 'nusantara';
+  const normalizedConfig: SupabaseRoomConfig = {
+    ...config,
+    selected_map: resolvedMap,
+    settings: { ...config.settings, selectedMap: resolvedMap },
+  };
+  const payload: Record<string, unknown> = { code, config: normalizedConfig };
   if (hasPlayersColumn === true) {
     payload.players = config.players ?? config.studentProgress ?? [];
   }
   if (hasActiveEventColumn !== false && config.active_event !== undefined) {
     payload.active_event = config.active_event;
   }
+  if (hasSelectedMapColumn !== false) {
+    payload.selected_map = resolvedMap;
+  }
 
   let { error } = await supabase.from('rooms').upsert(payload, { onConflict: 'code' });
+  if (error && isMissingSelectedMapColumnError(error)) {
+    hasSelectedMapColumn = false;
+    delete payload.selected_map;
+    const retry = await supabase.from('rooms').upsert(payload, { onConflict: 'code' });
+    error = retry.error;
+  }
   if (error && isMissingActiveEventColumnError(error)) {
     hasActiveEventColumn = false;
     delete payload.active_event;
@@ -320,6 +344,9 @@ export async function upsertSupabaseRoom(code: string, config: SupabaseRoomConfi
   if (error) {
     throw new Error(error.message || 'Gagal menyimpan data ruangan ke tabel rooms Supabase.');
   }
+  if (hasSelectedMapColumn === null && payload.selected_map !== undefined) {
+    hasSelectedMapColumn = true;
+  }
 }
 
 export async function publishRoomCommandToSupabase(
@@ -328,23 +355,48 @@ export async function publishRoomCommandToSupabase(
   latestConfig: SupabaseRoomConfig,
 ): Promise<void> {
   const supabase = getSupabaseClient();
+  const nextMap: MapThemeId =
+    command.mapId ||
+    command.settings?.selectedMap ||
+    latestConfig.selected_map ||
+    latestConfig.settings?.selectedMap ||
+    'nusantara';
   const nextConfig: SupabaseRoomConfig = {
     ...latestConfig,
+    selected_map: nextMap,
+    settings: {
+      ...latestConfig.settings,
+      ...(command.settings || {}),
+      selectedMap: nextMap,
+    },
     active_event: command,
   };
   const updatePayload: Record<string, unknown> = { config: nextConfig };
   if (hasActiveEventColumn !== false) {
     updatePayload.active_event = command;
   }
+  if (hasSelectedMapColumn !== false) {
+    updatePayload.selected_map = nextMap;
+  }
 
   let { error } = await supabase.from('rooms').update(updatePayload).eq('code', code);
-  if (error && isMissingActiveEventColumnError(error)) {
-    hasActiveEventColumn = false;
-    const retry = await supabase.from('rooms').update({ config: nextConfig }).eq('code', code);
+  if (error && isMissingSelectedMapColumnError(error)) {
+    hasSelectedMapColumn = false;
+    delete updatePayload.selected_map;
+    const retry = await supabase.from('rooms').update(updatePayload).eq('code', code);
     error = retry.error;
   }
-  if (!error && hasActiveEventColumn === null) {
+  if (error && isMissingActiveEventColumnError(error)) {
+    hasActiveEventColumn = false;
+    delete updatePayload.active_event;
+    const retry = await supabase.from('rooms').update(updatePayload).eq('code', code);
+    error = retry.error;
+  }
+  if (!error && hasActiveEventColumn === null && updatePayload.active_event !== undefined) {
     hasActiveEventColumn = true;
+  }
+  if (!error && hasSelectedMapColumn === null && updatePayload.selected_map !== undefined) {
+    hasSelectedMapColumn = true;
   }
   if (error) {
     throw new Error(error.message || 'Gagal memperbarui active_event ruangan ke Supabase.');
@@ -359,33 +411,44 @@ export async function fetchSupabaseRoomRecord(code: string): Promise<{
   const supabase = getSupabaseClient();
 
   if (hasPlayersColumn !== false) {
-    const selectCols =
-      hasActiveEventColumn !== false ? 'config, players, active_event' : 'config, players';
+    const cols = ['config', 'players'];
+    if (hasActiveEventColumn !== false) cols.push('active_event');
+    if (hasSelectedMapColumn !== false) cols.push('selected_map');
     const { data, error } = await supabase
       .from('rooms')
-      .select(selectCols)
+      .select(cols.join(', '))
       .eq('code', code)
       .single();
 
     if (!error && data) {
       hasPlayersColumn = true;
       if (hasActiveEventColumn !== false) hasActiveEventColumn = true;
+      if (hasSelectedMapColumn !== false) hasSelectedMapColumn = true;
       const row = data as unknown as {
         config?: SupabaseRoomConfig;
         players?: PersistedStudentProgress[];
         active_event?: RoomCommandPayload | null;
+        selected_map?: MapThemeId | null;
       };
       if (!row.config) {
         throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
       }
+      const resolvedMap = row.selected_map || row.config.selected_map || row.config.settings?.selectedMap || 'nusantara';
+      const normalizedConfig: SupabaseRoomConfig = {
+        ...row.config,
+        selected_map: resolvedMap,
+        settings: { ...row.config.settings, selectedMap: resolvedMap },
+      };
       return {
-        config: row.config,
+        config: normalizedConfig,
         players: Array.isArray(row.players) ? row.players : null,
         activeEvent: row.active_event ?? row.config.active_event ?? null,
       };
     }
 
-    if (error && isMissingActiveEventColumnError(error)) {
+    if (error && isMissingSelectedMapColumnError(error)) {
+      hasSelectedMapColumn = false;
+    } else if (error && isMissingActiveEventColumnError(error)) {
       hasActiveEventColumn = false;
     } else if (error && isMissingPlayersColumnError(error)) {
       hasPlayersColumn = false;
@@ -394,22 +457,56 @@ export async function fetchSupabaseRoomRecord(code: string): Promise<{
     }
   }
 
-  const fallbackCols = hasActiveEventColumn !== false ? 'config, active_event' : 'config';
-  const { data, error } = await supabase.from('rooms').select(fallbackCols).eq('code', code).single();
-  if (error && isMissingActiveEventColumnError(error)) {
-    hasActiveEventColumn = false;
-    const retry = await supabase.from('rooms').select('config').eq('code', code).single();
+  const fallbackCols = ['config'];
+  if (hasActiveEventColumn !== false) fallbackCols.push('active_event');
+  if (hasSelectedMapColumn !== false) fallbackCols.push('selected_map');
+  const { data, error } = await supabase.from('rooms').select(fallbackCols.join(', ')).eq('code', code).single();
+  if (error && (isMissingActiveEventColumnError(error) || isMissingSelectedMapColumnError(error))) {
+    if (isMissingSelectedMapColumnError(error)) hasSelectedMapColumn = false;
+    if (isMissingActiveEventColumnError(error)) hasActiveEventColumn = false;
+    const retryCols = ['config'];
+    if (hasActiveEventColumn !== false) retryCols.push('active_event');
+    const retry = await supabase.from('rooms').select(retryCols.join(', ')).eq('code', code).single();
+    if (retry.error && isMissingActiveEventColumnError(retry.error)) {
+      hasActiveEventColumn = false;
+      const retryBare = await supabase.from('rooms').select('config').eq('code', code).single();
+      if (retryBare.error) {
+        throw new Error(retryBare.error.message || `Ruangan "${code}" tidak ditemukan di Supabase.`);
+      }
+      const rBare = retryBare.data as unknown as { config?: SupabaseRoomConfig } | null;
+      if (!rBare || !rBare.config) {
+        throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
+      }
+      const resolvedMap = rBare.config.selected_map || rBare.config.settings?.selectedMap || 'nusantara';
+      return {
+        config: {
+          ...rBare.config,
+          selected_map: resolvedMap,
+          settings: { ...rBare.config.settings, selectedMap: resolvedMap },
+        },
+        players: null,
+        activeEvent: rBare.config.active_event ?? null,
+      };
+    }
     if (retry.error) {
       throw new Error(retry.error.message || `Ruangan "${code}" tidak ditemukan di Supabase.`);
     }
-    const rData = retry.data as unknown as { config?: SupabaseRoomConfig } | null;
+    const rData = retry.data as unknown as {
+      config?: SupabaseRoomConfig;
+      active_event?: RoomCommandPayload | null;
+    } | null;
     if (!rData || !rData.config) {
       throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
     }
+    const resolvedMap = rData.config.selected_map || rData.config.settings?.selectedMap || 'nusantara';
     return {
-      config: rData.config,
+      config: {
+        ...rData.config,
+        selected_map: resolvedMap,
+        settings: { ...rData.config.settings, selectedMap: resolvedMap },
+      },
       players: null,
-      activeEvent: rData.config.active_event ?? null,
+      activeEvent: rData.active_event ?? rData.config.active_event ?? null,
     };
   }
   if (error) {
@@ -418,13 +515,20 @@ export async function fetchSupabaseRoomRecord(code: string): Promise<{
   const row = data as unknown as {
     config?: SupabaseRoomConfig;
     active_event?: RoomCommandPayload | null;
+    selected_map?: MapThemeId | null;
   } | null;
   if (!row || !row.config) {
     throw new Error(`Data konfigurasi ruangan "${code}" kosong atau belum dibuat Guru.`);
   }
   if (hasActiveEventColumn !== false) hasActiveEventColumn = true;
+  if (hasSelectedMapColumn !== false) hasSelectedMapColumn = true;
+  const resolvedMap = row.selected_map || row.config.selected_map || row.config.settings?.selectedMap || 'nusantara';
   return {
-    config: row.config,
+    config: {
+      ...row.config,
+      selected_map: resolvedMap,
+      settings: { ...row.config.settings, selectedMap: resolvedMap },
+    },
     players: null,
     activeEvent: row.active_event ?? row.config.active_event ?? null,
   };
@@ -519,12 +623,14 @@ export function buildSupabaseRoomConfig(room: HostRoomState): SupabaseRoomConfig
     }),
   );
 
+  const resolvedMap: MapThemeId = room.settings?.selectedMap || 'nusantara';
   return {
     status: room.status,
     teacherId: room.teacherId,
     teacherName: room.teacherName,
     teacherAvatar: room.teacherAvatar,
-    settings: room.settings,
+    settings: { ...room.settings, selectedMap: resolvedMap },
+    selected_map: resolvedMap,
     paused: room.paused,
     sessionEnded: room.sessionEnded,
     endReason: room.endReason,

@@ -31,6 +31,12 @@ export const SummitEssayModal: React.FC<SummitEssayModalProps> = ({
     setInputVal('');
   }, [currentIndex]);
 
+  useEffect(() => {
+    if (feedback) {
+      setInputVal('');
+    }
+  }, [feedback]);
+
   if (!question) return null;
 
   const total = questions.length;
@@ -39,8 +45,10 @@ export const SummitEssayModal: React.FC<SummitEssayModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (feedback) return;
-    if (!inputVal.trim()) return;
-    onSubmitAnswer(inputVal);
+    const trimmed = inputVal.trim();
+    if (!trimmed) return;
+    setInputVal('');
+    onSubmitAnswer(trimmed);
   };
 
   return (
@@ -65,21 +73,33 @@ export const SummitEssayModal: React.FC<SummitEssayModalProps> = ({
 
         <h2 className="text-lg font-semibold text-white leading-relaxed">{question.question}</h2>
 
-        <form onSubmit={handleSubmit} className="space-y-3">
+        <form onSubmit={handleSubmit} autoComplete="off" className="space-y-3">
           <div>
-            <label htmlFor="summit-essay-input" className="block text-xs text-slate-400 mb-1.5">
-              Ketik jawaban singkat Anda di bawah ini (mendukung kata kunci inti, sinonim/terjemahan, & toleransi kemiripan penulisan):
+            <label
+              htmlFor="summit-essay-input"
+              className="block text-xs text-slate-400 mb-1.5"
+            >
+              Ketik jawaban singkat (1–3 kata, mendukung sinonim &amp; toleransi ejaan):
             </label>
+
             <input
               id="summit-essay-input"
+              name={`essay_answer_${currentIndex}`}
               type="text"
               autoFocus
               autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
               disabled={Boolean(feedback)}
-              value={feedback ? feedback.studentAnswer : inputVal}
+              value={feedback ? '' : inputVal}
               onChange={(e) => setInputVal(e.target.value)}
-              placeholder="Ketik jawaban singkat di sini..."
-              className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-white/20 text-base text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 select-text disabled:opacity-75"
+              placeholder={
+                feedback
+                  ? 'Jawaban terkirim & kolom dikosongkan'
+                  : 'Ketik jawaban singkat kamu di sini...'
+              }
+              className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-white/20 text-base text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 select-text disabled:opacity-60"
             />
           </div>
 
@@ -97,7 +117,7 @@ export const SummitEssayModal: React.FC<SummitEssayModalProps> = ({
 
         {feedback && (
           <div
-            className={`p-4 rounded-xl border space-y-1.5 ${
+            className={`p-4 rounded-xl border space-y-2 ${
               feedback.isCorrect
                 ? 'bg-emerald-950/60 border-emerald-500/50'
                 : 'bg-red-950/60 border-red-500/50'
@@ -107,28 +127,14 @@ export const SummitEssayModal: React.FC<SummitEssayModalProps> = ({
               {feedback.isCorrect ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span className="text-emerald-300">Jawaban Tepat — Nilai Puncak Ditambahkan!</span>
+                  <span className="text-emerald-300">Jawaban Tepat! (+120 Poin)</span>
                 </>
               ) : (
                 <>
                   <XCircle className="w-4 h-4 text-red-400 shrink-0" />
-                  <span className="text-red-300">
-                    Jawaban Belum Cocok · Kunci: {feedback.correctKey}
-                  </span>
+                  <span className="text-red-300">Jawaban Belum Tepat</span>
                 </>
               )}
-            </div>
-            <div className="text-xs text-slate-300">
-              Ketikan tersimpan: <strong className="text-white">"{feedback.studentAnswer}"</strong>
-            </div>
-            <div className="rounded-lg bg-slate-950/70 border border-white/10 px-3 py-2 text-xs text-slate-200 leading-relaxed">
-              <span className="font-bold text-amber-300">Pembahasan: </span>
-              <span>
-                {(feedback.explanation && feedback.explanation.trim()) ||
-                (question.explanation && question.explanation.trim())
-                  ? (feedback.explanation || question.explanation || '').trim()
-                  : `Kata kunci jawaban yang benar adalah "${feedback.correctKey}".`}
-              </span>
             </div>
             <div className="flex items-center justify-between gap-3 pt-2 flex-wrap border-t border-white/10">
               <div className="inline-flex items-center gap-1.5 text-[11px] text-amber-300 font-medium font-mono-num tabular-nums">

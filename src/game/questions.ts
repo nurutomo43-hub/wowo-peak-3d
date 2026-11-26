@@ -612,6 +612,9 @@ export function buildStudentQuizDeck(
   const source =
     Array.isArray(baseQuestions) && baseQuestions.length > 0 ? baseQuestions : DEFAULT_QUESTIONS;
   const rng = mulberry32(hashSeed(`${roomCode}::${studentId}`));
+  rng();
+  rng();
+  rng();
 
   let pool: QuizQuestion[] = [];
   while (pool.length < 25) {
@@ -653,6 +656,9 @@ export function buildStudentEssayDeck(
       ? baseEssayQuestions
       : DEFAULT_ESSAY_QUESTIONS;
   const rng = mulberry32(hashSeed(`${roomCode}::${studentId}::essay`));
+  rng();
+  rng();
+  rng();
   const shuffled = shuffleWithRng(source, rng);
   return shuffled.map((q) => ({
     ...q,

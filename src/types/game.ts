@@ -2,6 +2,60 @@ export type Role = 'student' | 'teacher';
 export type GenderType = 'male' | 'female';
 export type TimeOfDay = 'pagi' | 'siang' | 'sore' | 'malam';
 export type WeatherType = 'cerah' | 'berkabut' | 'hujan' | 'badai' | 'salju' | 'kiamat';
+export type MapThemeId = 'nusantara' | 'lava' | 'salju' | 'sky_kingdom' | 'cyber_neon';
+export type MapSelectionChoice = MapThemeId | 'random';
+
+export interface MapThemeMeta {
+  id: MapThemeId;
+  name: string;
+  shortName: string;
+  subtitle: string;
+  accentHex: string;
+  badgeClass: string;
+}
+
+export const MAP_THEMES: ReadonlyArray<MapThemeMeta> = [
+  {
+    id: 'nusantara',
+    name: 'Puncak Nusantara',
+    shortName: 'Nusantara',
+    subtitle: 'Tropis hijau cerah, jembatan kayu klasik, awan putih',
+    accentHex: '#10b981',
+    badgeClass: 'from-emerald-500 to-teal-600',
+  },
+  {
+    id: 'lava',
+    name: 'Kawah Lava Vulkanik',
+    shortName: 'Lava Vulkanik',
+    subtitle: 'Tebing obsidian gelap, sungai lahar menyala & langit jingga',
+    accentHex: '#f97316',
+    badgeClass: 'from-orange-500 to-red-600',
+  },
+  {
+    id: 'salju',
+    name: 'Puncak Salju Everest',
+    shortName: 'Salju Everest',
+    subtitle: 'Pegunungan es biru-putih, kabut dingin & jembatan berlapis es',
+    accentHex: '#38bdf8',
+    badgeClass: 'from-sky-400 to-blue-600',
+  },
+  {
+    id: 'sky_kingdom',
+    name: 'Negeri Awan & Pelangi',
+    shortName: 'Sky Kingdom',
+    subtitle: 'Pulau melayang di lautan awan, pelangi cakrawala & pilar kristal',
+    accentHex: '#ec4899',
+    badgeClass: 'from-pink-400 via-sky-400 to-amber-400',
+  },
+  {
+    id: 'cyber_neon',
+    name: 'Dunia Cyber Neon',
+    shortName: 'Cyber Neon',
+    subtitle: 'Arena malam futuristik dengan garis neon cyan & ungu menyala',
+    accentHex: '#a855f7',
+    badgeClass: 'from-cyan-500 to-purple-600',
+  },
+];
 
 export type OutfitType =
   | 'windbreaker'
@@ -321,13 +375,20 @@ export type DisasterEventType =
   | 'heavy_rain'
   | 'thick_fog'
   | 'landslide'
+  | 'flash_flood'
+  | 'lava_rain'
+  | 'lava_landslide'
+  | 'lava_flood'
   | 'kuntilanak'
   | 'pocong'
   | 'thunder'
   | 'earthquake'
   | 'wildfire'
   | 'meteor'
-  | 'wildlife';
+  | 'wildlife'
+  | 'yeti'
+  | 'snowstorm'
+  | 'brainrot';
 
 export interface TriggerDisasterPayload {
   type: DisasterEventType;
@@ -341,7 +402,8 @@ export type RoomCommandType =
   | DisasterEventType
   | 'pause_class'
   | 'start_expedition'
-  | 'end_session';
+  | 'end_session'
+  | 'CHANGE_MAP';
 
 export interface RoomCommandPayload {
   type: RoomCommandType;
@@ -354,6 +416,7 @@ export interface RoomCommandPayload {
   remainingSec?: number;
   sessionEndsAt?: number | null;
   settings?: RoomSettings;
+  mapId?: MapThemeId;
   participants?: ParticipantSummary[];
   reason?: 'teacher' | 'timeout';
   leaderboard?: ParticipantSummary[];
@@ -484,8 +547,9 @@ export interface EssayAnswerRecord {
 export interface RoomSettings {
   timeOfDay: TimeOfDay;
   weather: WeatherType;
+  selectedMap?: MapThemeId;
   quizDuration: number;
-  sessionDurationMinutes: number; // 10, 15, 20, 25, 30
+  sessionDurationMinutes: number; // 10..60 minutes
   explanationDurationSec: number; // 40, 50, 60
   difficultyLevel: number;
   respawnMode: RespawnMode;
@@ -571,6 +635,8 @@ export interface StudentRestoreProgress {
   fallCount: number;
   answers: AnswerRecord[];
   essayAnswers: EssayAnswerRecord[];
+  studentStartedAt?: number;
+  remainingSec?: number;
 }
 
 export interface DifficultyConfig {

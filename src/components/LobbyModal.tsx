@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Dices,
   Download,
   FileSpreadsheet,
   Loader2,
@@ -16,12 +17,14 @@ import {
   UserCog,
   Users,
 } from 'lucide-react';
-import type {
-  AvatarConfig,
-  EssayQuestion,
-  QuizQuestion,
-  Role,
-  StudentRestoreProgress,
+import {
+  MAP_THEMES,
+  type AvatarConfig,
+  type EssayQuestion,
+  type MapSelectionChoice,
+  type QuizQuestion,
+  type Role,
+  type StudentRestoreProgress,
 } from '../types/game';
 import {
   downloadEssayTemplateExcel,
@@ -49,6 +52,8 @@ interface LobbyModalProps {
   onChangeInitSessionDuration: (val: number) => void;
   initExplanationDuration: number;
   onChangeInitExplanationDuration: (val: number) => void;
+  initSelectedMap: MapSelectionChoice;
+  onChangeInitSelectedMap: (val: MapSelectionChoice) => void;
   customQuestions: QuizQuestion[] | null;
   pgFileName: string;
   onChangeCustomQuestions: (q: QuizQuestion[] | null, fileName?: string) => void;
@@ -93,6 +98,8 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   onChangeInitSessionDuration,
   initExplanationDuration,
   onChangeInitExplanationDuration,
+  initSelectedMap,
+  onChangeInitSelectedMap,
   customQuestions,
   pgFileName,
   onChangeCustomQuestions,
@@ -391,7 +398,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                 </div>
                 <div>
                   <label htmlFor="init-session-duration" className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Durasi Sesi / Ujian (10–30 mnt)
+                    Durasi Sesi / Ujian (10–60 mnt)
                   </label>
                   <select
                     id="init-session-duration"
@@ -399,7 +406,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                     onChange={(e) => onChangeInitSessionDuration(Number(e.target.value))}
                     className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-white/15 text-sm font-mono-num text-amber-300 focus:outline-none focus:border-amber-400"
                   >
-                    {[10, 15, 20, 25, 30].map((m) => (
+                    {[10, 15, 20, 25, 30, 40, 45, 50, 60].map((m) => (
                       <option key={m} value={m}>
                         {m} Menit
                       </option>
@@ -439,6 +446,61 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* 5-Map 3D Theme Selector + Random Map Card */}
+              <div className="p-3.5 rounded-xl bg-slate-950/80 border border-white/10 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-xs font-semibold text-white">
+                    Pilih Tema Map Gunung 3D (5 Arsitektur Unik + Acak)
+                  </div>
+                  <span className="text-[11px] font-semibold text-amber-300">
+                    {initSelectedMap === 'random'
+                      ? 'Acak (Diundi saat buat ruangan)'
+                      : MAP_THEMES.find((m) => m.id === initSelectedMap)?.name || 'Puncak Nusantara'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {MAP_THEMES.map((m) => {
+                    const active = initSelectedMap === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => onChangeInitSelectedMap(m.id)}
+                        className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+                          active
+                            ? 'bg-slate-800 border-amber-400 ring-1 ring-amber-400/60'
+                            : 'bg-slate-900/90 border-white/10 hover:border-white/25'
+                        }`}
+                      >
+                        <div className={`h-1.5 w-full rounded-full bg-gradient-to-r ${m.badgeClass} mb-2`} />
+                        <div className="text-xs font-bold text-white leading-tight">{m.shortName}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 leading-snug line-clamp-2">
+                          {m.subtitle}
+                        </div>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => onChangeInitSelectedMap('random')}
+                    className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+                      initSelectedMap === 'random'
+                        ? 'bg-slate-800 border-amber-400 ring-1 ring-amber-400/60'
+                        : 'bg-slate-900/90 border-white/10 hover:border-white/25'
+                    }`}
+                  >
+                    <div className="h-1.5 w-full rounded-full bg-gradient-to-r from-amber-400 via-fuchsia-500 to-cyan-400 mb-2" />
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-white leading-tight">
+                      <Dices className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                      <span>Acak (Random Map)</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5 leading-snug line-clamp-2">
+                      Undi otomatis 1 dari 5 arsitektur map 3D saat ruangan dibuat
+                    </div>
+                  </button>
                 </div>
               </div>
 
